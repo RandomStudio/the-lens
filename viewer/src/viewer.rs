@@ -139,6 +139,8 @@ impl ImageSequence {
         self.width = width;
         self.height = height;
         self.blank = vec![0u32; width * height];
+        self.cache.clear();
+        self.in_flight.clear();
     }
 
     pub fn frame_count(&self) -> usize {
@@ -301,10 +303,16 @@ impl Viewer {
     }
 
     pub fn render(&mut self, angle: f64) {
-        for ((win, seq), &(w, h)) in self.windows.iter_mut()
+        for ((win, seq), dim) in self.windows.iter_mut()
             .zip(self.sequences.iter_mut())
-            .zip(self.dims.iter())
+            .zip(self.dims.iter_mut())
         {
+            let (w, h) = win.get_size();
+            if (w, h) != *dim {
+                seq.set_dimensions(w, h);
+                *dim = (w, h);
+            }
+            let (w, h) = *dim;
             let hue_color = seq.hue_color_at_angle(angle);
             let hue_opacity = seq.hue_opacity;
             let scale = seq.scale_factor();

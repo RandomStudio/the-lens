@@ -22,19 +22,12 @@ impl Light {
 
         let mut dmx = [0u8; 512];
 
-        // Intensity: full brightness (16-bit MSB/LSB)
-        dmx[INFINIMAT_START] = 255;
-        dmx[INFINIMAT_START + 1] = 255;
-        // Red 16-bit
-        dmx[INFINIMAT_START + 2] = r;
-        dmx[INFINIMAT_START + 3] = r;
-        // Green 16-bit
-        dmx[INFINIMAT_START + 4] = g;
-        dmx[INFINIMAT_START + 5] = g;
-        // Blue 16-bit
-        dmx[INFINIMAT_START + 6] = b;
-        dmx[INFINIMAT_START + 7] = b;
-        // White + Warm White: 0
+        // Mode 4: RGBWW 8-bit
+        dmx[INFINIMAT_START]     = 255; // Ch1: Intensity
+        dmx[INFINIMAT_START + 1] = r;   // Ch2: Red
+        dmx[INFINIMAT_START + 2] = g;   // Ch3: Green
+        dmx[INFINIMAT_START + 3] = b;   // Ch4: Blue
+        // Ch5 White, Ch6 Warm White, Ch7 Strobe: all 0
 
         let packet = artnet_dmx_packet(0, &dmx);
         let _ = self.socket.send_to(&packet, ARTNET_ADDR);

@@ -24,6 +24,7 @@ impl MqttRotator {
         let shared = Arc::clone(&self.angle);
         thread::spawn(move || {
             let mut opts = MqttOptions::new("rotation-viewer", BROKER, PORT);
+            opts.set_credentials("tether", "sp_ceB0ss!");
             opts.set_keep_alive(std::time::Duration::from_secs(5));
             let (client, mut connection) = Client::new(opts, 32);
             client.subscribe(TOPIC, QoS::AtMostOnce).unwrap();

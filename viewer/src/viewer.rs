@@ -40,6 +40,9 @@ fn make_fullscreen(window: &Window) {
         let ns_view: *mut Object = h.ns_view.as_ptr() as *mut Object;
         let ns_window: *mut Object = msg_send![ns_view, window];
 
+        // Strip all window chrome (NSWindowStyleMaskBorderless = 0)
+        let () = msg_send![ns_window, setStyleMask: 0usize];
+
         // Place window above menu bar and all system UI (NSScreenSaverWindowLevel = 1000)
         let () = msg_send![ns_window, setLevel: 1000i64];
 

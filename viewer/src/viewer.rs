@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
 
 const CACHE_RADIUS: usize = 50;
-const HUE_OVERLAY_ALPHA: f64 = 0.35;
+const DEFAULT_HUE_OPACITY: f64 = 0.35;
 
 pub fn display_bounds(index: usize) -> (isize, isize, usize, usize) {
     #[cfg(target_os = "macos")]
@@ -61,6 +61,7 @@ pub struct ImageSequence {
     result_rx: mpsc::Receiver<(usize, Vec<u32>)>,
     index_transform: fn(isize, isize) -> isize,
     hue_shift: Option<i32>,
+    hue_opacity: f64,
     scale: Option<f64>,
 }
 
@@ -100,6 +101,7 @@ impl ImageSequence {
             result_tx: tx, result_rx: rx,
             index_transform,
             hue_shift: None,
+            hue_opacity: DEFAULT_HUE_OPACITY,
             scale: None,
         }
     }
@@ -120,12 +122,18 @@ impl ImageSequence {
             result_tx: tx, result_rx: rx,
             index_transform: |idx, _n| idx,
             hue_shift: None,
+            hue_opacity: DEFAULT_HUE_OPACITY,
             scale: None,
         }
     }
 
     pub fn hue_shift(mut self, start_hue: i32) -> Self {
         self.hue_shift = Some(start_hue);
+        self
+    }
+
+    pub fn hue_opacity(mut self, opacity: f64) -> Self {
+        self.hue_opacity = opacity;
         self
     }
 
@@ -329,12 +337,13 @@ impl Viewer {
             .zip(self.dims.iter())
         {
             let hue_color = seq.hue_color_at_angle(angle);
+            let hue_opacity = seq.hue_opacity;
             let scale = seq.scale_factor();
             let frame = seq.frame_at_angle(angle);
             let blended: Vec<u32>;
             let scaled: Vec<u32>;
             let buf: &[u32] = if let Some(color) = hue_color {
-                blended = frame.iter().map(|&px| blend_hue(px, color, HUE_OVERLAY_ALPHA)).collect();
+                blended = frame.iter().map(|&px| blend_hue(px, color, hue_opacity)).collect();
                 &blended
             } else {
                 frame

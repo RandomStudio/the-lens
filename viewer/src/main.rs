@@ -34,6 +34,9 @@ fn main() {
         if let Some(hue) = s.hue_shift {
             seq = seq.hue_shift(hue);
         }
+        if let Some(opacity) = s.hue_opacity {
+            seq = seq.hue_opacity(opacity);
+        }
         if let Some(scale) = s.scale {
             seq = seq.scale(scale);
         }

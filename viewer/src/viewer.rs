@@ -59,7 +59,7 @@ pub struct ImageSequence {
 }
 
 impl ImageSequence {
-    pub fn load(folder: &str) -> Self {
+    pub fn load(folder: &str, index_transform: fn(usize, usize) -> usize) -> Self {
         let path = Path::new(folder);
         let (tx, rx) = mpsc::channel();
 
@@ -92,7 +92,7 @@ impl ImageSequence {
             width: 0, height: 0, blank: vec![],
             cache: HashMap::new(), in_flight: HashSet::new(),
             result_tx: tx, result_rx: rx,
-            index_transform: |idx, _n| idx,
+            index_transform,
         }
     }
 

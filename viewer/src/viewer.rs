@@ -1,25 +1,65 @@
 use minifb::{Key, Window, WindowOptions};
-use rayon::prelude::*;
-use std::path::Path;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::{mpsc, Arc};
 
-const TOTAL_FRAMES: usize = 60;
+const CACHE_RADIUS: usize = 50;
+
+// Returns (x, y, width, height) for the display at the given index,
+// sorted left-to-right by screen position.
+pub fn display_bounds(index: usize) -> (isize, isize, usize, usize) {
+    #[cfg(target_os = "macos")]
+    {
+        use core_graphics::display::CGDisplay;
+        let ids = CGDisplay::active_displays().expect("failed to list displays");
+        let mut displays: Vec<(isize, isize, usize, usize)> = ids
+            .iter()
+            .map(|&id| {
+                let b = CGDisplay::new(id).bounds();
+                (b.origin.x as isize, b.origin.y as isize,
+                 b.size.width as usize, b.size.height as usize)
+            })
+            .collect();
+        displays.sort_by_key(|&(x, y, _, _)| (x, y));
+        assert!(
+            index < displays.len(),
+            "display {} requested but only {} available",
+            index, displays.len()
+        );
+        return displays[index];
+    }
+    #[cfg(not(target_os = "macos"))]
+    panic!("display_bounds not implemented for this platform");
+}
 
 pub struct ImageSequence {
-  frames: Vec<Vec<u32>>,
+    paths: Arc<Vec<PathBuf>>,
+    width: usize,
+    height: usize,
+    blank: Vec<u32>,
+    cache: HashMap<usize, Vec<u32>>,
+    in_flight: HashSet<usize>,
+    result_tx: mpsc::Sender<(usize, Vec<u32>)>,
+    result_rx: mpsc::Receiver<(usize, Vec<u32>)>,
 }
 
 impl ImageSequence {
-    pub fn load(folder: &str, width: usize, height: usize) -> Self {
-        let blank_frame = || vec![0u32; width * height];
-
+    pub fn load(folder: &str) -> Self {
         let path = Path::new(folder);
+        let (tx, rx) = mpsc::channel();
+
         if !path.exists() {
-            eprintln!("[WARN] '{}' does not exist — using blank frames.", folder);
-            return Self { frames: vec![blank_frame(); TOTAL_FRAMES] };
+            eprintln!("[WARN] '{}' does not exist — will show blank frames.", folder);
+            return Self {
+                paths: Arc::new(vec![]),
+                width: 0, height: 0, blank: vec![],
+                cache: HashMap::new(), in_flight: HashSet::new(),
+                result_tx: tx, result_rx: rx,
+            };
         }
 
         let mut entries: Vec<_> = std::fs::read_dir(path)
-            .expect("Failed to read image folder")
+            .expect("failed to read image folder")
             .filter_map(|e| e.ok())
             .filter(|e| {
                 let n = e.file_name().to_string_lossy().to_lowercase();
@@ -30,58 +70,132 @@ impl ImageSequence {
         entries.sort_by_key(|e| e.file_name());
 
         if entries.is_empty() {
-            eprintln!("[WARN] No images in '{}' — using blank frames.", folder);
-            return Self { frames: vec![blank_frame(); TOTAL_FRAMES] };
+            eprintln!("[WARN] No images in '{}' — will show blank frames.", folder);
+            return Self {
+                paths: Arc::new(vec![]),
+                width: 0, height: 0, blank: vec![],
+                cache: HashMap::new(), in_flight: HashSet::new(),
+                result_tx: tx, result_rx: rx,
+            };
         }
 
-        println!("[INFO] Loading {} images from '{}'", entries.len(), folder);
+        let paths: Vec<PathBuf> = entries.iter().map(|e| e.path()).collect();
+        println!("[INFO] Found {} images in '{}'", paths.len(), folder);
 
-        let frames = entries
-            .par_iter()
-            .map(|entry| {
-                let img = image::open(entry.path())
-                    .unwrap_or_else(|_| panic!("Failed to open {:?}", entry.path()))
-                    .to_rgba8();
-
-                let img_w = img.width() as usize;
-                let img_h = img.height() as usize;
-
-                // Centre vertically; crop if taller than window
-                let src_y0 = if img_h > height { (img_h - height) / 2 } else { 0 };
-                let dst_y0 = if img_h < height { (height - img_h) / 2 } else { 0 };
-                let rows   = img_h.min(height);
-                let cols   = img_w.min(width);
-
-                let mut canvas = vec![0u32; width * height];
-                let raw = img.as_raw();
-                let stride = img_w * 4;
-
-                for out_row in 0..rows {
-                    let src = (src_y0 + out_row) * stride;
-                    let dst = (dst_y0 + out_row) * width;
-                    for col in 0..cols {
-                        let p = src + col * 4;
-                        canvas[dst + col] =
-                            ((raw[p] as u32) << 16) | ((raw[p + 1] as u32) << 8) | (raw[p + 2] as u32);
-                    }
-                }
-
-                canvas
-            })
-            .collect();
-
-        Self { frames }
+        Self {
+            paths: Arc::new(paths),
+            width: 0, height: 0, blank: vec![],
+            cache: HashMap::new(), in_flight: HashSet::new(),
+            result_tx: tx, result_rx: rx,
+        }
     }
 
-    pub fn frame_at_angle(&self, angle: f64) -> &[u32] {
-        let n = self.frames.len();
-        let idx = (angle.rem_euclid(360.0) / 360.0 * n as f64) as usize;
-        &self.frames[idx.min(n - 1)]
+    pub fn set_dimensions(&mut self, width: usize, height: usize) {
+        self.width = width;
+        self.height = height;
+        self.blank = vec![0u32; width * height];
     }
 
     pub fn frame_count(&self) -> usize {
-        self.frames.len()
+        self.paths.len()
     }
+
+    pub fn frame_at_angle(&mut self, angle: f64) -> &[u32] {
+        if self.paths.is_empty() {
+            return &self.blank;
+        }
+
+        let n = self.paths.len();
+        let idx = ((angle.rem_euclid(360.0) / 360.0) * n as f64) as usize;
+        let idx = idx.min(n - 1);
+
+        // Drain completed background loads into cache.
+        while let Ok((i, frame)) = self.result_rx.try_recv() {
+            self.in_flight.remove(&i);
+            self.cache.insert(i, frame);
+        }
+
+        // Compute the desired window (wraps around).
+        let window: HashSet<usize> = window_indices(idx, n).collect();
+
+        // Evict frames that have left the window.
+        self.cache.retain(|k, _| window.contains(k));
+        self.in_flight.retain(|k| window.contains(k));
+
+        // Schedule background loads for uncached window frames,
+        // in order of proximity so nearer frames load first.
+        for wi in window_indices(idx, n) {
+            if !self.cache.contains_key(&wi) && !self.in_flight.insert(wi) {
+                continue; // already in-flight
+            } else if self.cache.contains_key(&wi) {
+                continue;
+            }
+            let paths = Arc::clone(&self.paths);
+            let tx = self.result_tx.clone();
+            let (w, h) = (self.width, self.height);
+            rayon::spawn(move || {
+                let frame = decode_frame(&paths[wi], w, h);
+                let _ = tx.send((wi, frame));
+            });
+        }
+
+        // Guarantee the current frame is ready (load synchronously on miss).
+        if !self.cache.contains_key(&idx) {
+            let frame = decode_frame(&self.paths[idx], self.width, self.height);
+            self.in_flight.remove(&idx);
+            self.cache.insert(idx, frame);
+        }
+
+        &self.cache[&idx]
+    }
+}
+
+// Yields indices in the window [center-CACHE_RADIUS, center+CACHE_RADIUS],
+// emitted outward from center so background tasks prioritise nearby frames.
+fn window_indices(center: usize, n: usize) -> impl Iterator<Item = usize> {
+    let n_i = n as isize;
+    let c = center as isize;
+    let r = CACHE_RADIUS as isize;
+    (0..=(2 * r)).map(move |step| {
+        // Interleave: 0, -1, +1, -2, +2 …
+        let offset = if step == 0 {
+            0
+        } else if step % 2 == 1 {
+            (step + 1) / 2
+        } else {
+            -(step / 2)
+        };
+        ((c + offset).rem_euclid(n_i)) as usize
+    })
+}
+
+fn decode_frame(path: &Path, width: usize, height: usize) -> Vec<u32> {
+    let img = image::open(path)
+        .unwrap_or_else(|_| panic!("failed to open {:?}", path))
+        .to_rgba8();
+
+    let img_w = img.width() as usize;
+    let img_h = img.height() as usize;
+    let src_y0 = if img_h > height { (img_h - height) / 2 } else { 0 };
+    let dst_y0 = if img_h < height { (height - img_h) / 2 } else { 0 };
+    let rows = img_h.min(height);
+    let cols = img_w.min(width);
+
+    let mut canvas = vec![0u32; width * height];
+    let raw = img.as_raw();
+    let stride = img_w * 4;
+
+    for out_row in 0..rows {
+        let src = (src_y0 + out_row) * stride;
+        let dst = (dst_y0 + out_row) * width;
+        for col in 0..cols {
+            let p = src + col * 4;
+            canvas[dst + col] =
+                ((raw[p] as u32) << 16) | ((raw[p + 1] as u32) << 8) | (raw[p + 2] as u32);
+        }
+    }
+
+    canvas
 }
 
 pub struct Viewer {
@@ -95,13 +209,17 @@ pub struct Viewer {
 
 impl Viewer {
     pub fn new(
-        seq1: ImageSequence,
-        w1_size: (usize, usize),
-        w1_pos: (isize, isize),
-        seq2: ImageSequence,
-        w2_size: (usize, usize),
-        w2_pos: (isize, isize),
+        mut seq1: ImageSequence,
+        display1: usize,
+        mut seq2: ImageSequence,
+        display2: usize,
     ) -> Self {
+        let (x1, y1, w1, h1) = display_bounds(display1);
+        let (x2, y2, w2, h2) = display_bounds(display2);
+
+        seq1.set_dimensions(w1, h1);
+        seq2.set_dimensions(w2, h2);
+
         let fs_opts = WindowOptions {
             borderless: true,
             topmost: true,
@@ -109,17 +227,17 @@ impl Viewer {
             ..WindowOptions::default()
         };
 
-        let mut window1 = Window::new("Display 1", w1_size.0, w1_size.1, fs_opts.clone())
-            .expect("Failed to create window 1");
-        window1.set_position(w1_pos.0, w1_pos.1);
+        let mut window1 = Window::new("Display 1", w1, h1, fs_opts.clone())
+            .expect("failed to create window 1");
+        window1.set_position(x1, y1);
         window1.set_target_fps(60);
 
-        let mut window2 = Window::new("Display 2", w2_size.0, w2_size.1, fs_opts)
-            .expect("Failed to create window 2");
-        window2.set_position(w2_pos.0, w2_pos.1);
+        let mut window2 = Window::new("Display 2", w2, h2, fs_opts)
+            .expect("failed to create window 2");
+        window2.set_position(x2, y2);
         window2.set_target_fps(60);
 
-        Self { window1, window2, seq1, seq2, w1: w1_size, w2: w2_size }
+        Self { window1, window2, seq1, seq2, w1: (w1, h1), w2: (w2, h2) }
     }
 
     pub fn is_open(&self) -> bool {
@@ -130,12 +248,14 @@ impl Viewer {
     }
 
     pub fn render(&mut self, angle: f64) {
+        let frame1 = self.seq1.frame_at_angle(angle);
         self.window1
-            .update_with_buffer(self.seq1.frame_at_angle(angle), self.w1.0, self.w1.1)
-            .expect("Window 1 update failed");
+            .update_with_buffer(frame1, self.w1.0, self.w1.1)
+            .expect("window 1 update failed");
 
+        let frame2 = self.seq2.frame_at_angle(angle);
         self.window2
-            .update_with_buffer(self.seq2.frame_at_angle(angle), self.w2.0, self.w2.1)
-            .expect("Window 2 update failed");
+            .update_with_buffer(frame2, self.w2.0, self.w2.1)
+            .expect("window 2 update failed");
     }
 }

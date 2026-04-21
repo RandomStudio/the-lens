@@ -9,6 +9,9 @@ image = "0.25"
 rumqttc = "0.24"
 rayon = "1"
 
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = "0.23"
+
 [[bin]]
 name = "rotation_viewer"
 path = "src/main.rs"

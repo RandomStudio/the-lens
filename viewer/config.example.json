@@ -7,7 +7,8 @@
     "port": 1883,
     "topic": "prototype/lens/angle",
     "username": "mqtt",
-    "password": "password"
+    "password": "password",
+    "lerp_speed": 8.0
   },
   "sequences": [
     {

@@ -1,18 +1,24 @@
 use crate::config::MqttConfig;
 use crate::receiver::AngleReceiver;
 use rumqttc::{Client, Event, MqttOptions, Packet, QoS};
+use std::cell::Cell;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
+use std::time::Instant;
 
 pub struct MqttReceiver {
-    angle: Arc<AtomicU64>,
+    target: Arc<AtomicU64>,
+    current: Cell<f64>,
+    last_time: Cell<Instant>,
+    lerp_speed: f64,
 }
 
 impl MqttReceiver {
     pub fn new(cfg: MqttConfig) -> Self {
-        let angle = Arc::new(AtomicU64::new(0f64.to_bits()));
-        let shared = Arc::clone(&angle);
+        let lerp_speed = cfg.lerp_speed;
+        let target = Arc::new(AtomicU64::new(0f64.to_bits()));
+        let shared = Arc::clone(&target);
 
         let mut opts = MqttOptions::new("rotation-receiver", &cfg.broker, cfg.port);
         opts.set_credentials(cfg.username, cfg.password);
@@ -39,12 +45,29 @@ impl MqttReceiver {
             }
         });
 
-        Self { angle }
+        Self {
+            target,
+            current: Cell::new(0.0),
+            last_time: Cell::new(Instant::now()),
+            lerp_speed,
+        }
     }
 }
 
 impl AngleReceiver for MqttReceiver {
     fn angle(&self) -> f64 {
-        f64::from_bits(self.angle.load(Ordering::Relaxed))
+        let now = Instant::now();
+        let dt = now.duration_since(self.last_time.get()).as_secs_f64();
+        self.last_time.set(now);
+
+        let target = f64::from_bits(self.target.load(Ordering::Relaxed));
+        let current = self.current.get();
+
+        // Shortest-arc delta to avoid spinning the long way around 0°/360°.
+        let delta = ((target - current + 180.0).rem_euclid(360.0)) - 180.0;
+        let alpha = 1.0 - (-self.lerp_speed * dt).exp();
+        let smoothed = (current + delta * alpha).rem_euclid(360.0);
+        self.current.set(smoothed);
+        smoothed
     }
 }

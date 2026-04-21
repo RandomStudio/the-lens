@@ -1,5 +1,7 @@
 use serde::Deserialize;
 
+fn default_lerp_speed() -> f64 { 8.0 }
+
 #[derive(Deserialize, Clone)]
 pub struct MqttConfig {
     pub broker: String,
@@ -7,6 +9,8 @@ pub struct MqttConfig {
     pub topic: String,
     pub username: String,
     pub password: String,
+    #[serde(default = "default_lerp_speed")]
+    pub lerp_speed: f64,
 }
 
 #[derive(Deserialize)]

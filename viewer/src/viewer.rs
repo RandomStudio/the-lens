@@ -217,21 +217,26 @@ fn decode_frame(path: &Path, width: usize, height: usize) -> Vec<u32> {
         .unwrap_or_else(|_| panic!("failed to open {:?}", path))
         .to_rgba8();
 
-    let img_w = img.width() as usize;
-    let img_h = img.height() as usize;
-    let src_y0 = if img_h > height { (img_h - height) / 2 } else { 0 };
-    let dst_y0 = if img_h < height { (height - img_h) / 2 } else { 0 };
-    let rows = img_h.min(height);
-    let cols = img_w.min(width);
+    // Scale to fill width exactly, maintaining aspect ratio.
+    let scaled_h = (img.height() as f64 * width as f64 / img.width() as f64).round() as u32;
+    let resized = image::imageops::resize(
+        &img, width as u32, scaled_h,
+        image::imageops::FilterType::Lanczos3,
+    );
+
+    // Center vertically, cropping top/bottom equally if taller than display.
+    let scaled_h = scaled_h as usize;
+    let src_y0 = if scaled_h > height { (scaled_h - height) / 2 } else { 0 };
+    let dst_y0 = if scaled_h < height { (height - scaled_h) / 2 } else { 0 };
+    let rows = scaled_h.min(height);
 
     let mut canvas = vec![0u32; width * height];
-    let raw = img.as_raw();
-    let stride = img_w * 4;
+    let raw = resized.as_raw();
 
-    for out_row in 0..rows {
-        let src = (src_y0 + out_row) * stride;
-        let dst = (dst_y0 + out_row) * width;
-        for col in 0..cols {
+    for row in 0..rows {
+        let src = (src_y0 + row) * width * 4;
+        let dst = (dst_y0 + row) * width;
+        for col in 0..width {
             let p = src + col * 4;
             canvas[dst + col] =
                 ((raw[p] as u32) << 16) | ((raw[p + 1] as u32) << 8) | (raw[p + 2] as u32);

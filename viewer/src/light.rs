@@ -27,11 +27,13 @@ impl Light {
 
         let mut dmx = [0u8; 512];
 
-        // Mode 4: RGBWW 8-bit — studio white via RGB channels (same layout that worked before)
+        // Mode 4: RGBWW 8-bit — studio white via W/WW channels, no colour
         dmx[INFINIMAT_START]     = intensity; // Ch1: Intensity
-        dmx[INFINIMAT_START + 1] = 255;       // Ch2: Red
-        dmx[INFINIMAT_START + 2] = 240;       // Ch3: Green  (~5500 K studio white)
-        dmx[INFINIMAT_START + 3] = 220;       // Ch4: Blue
+        dmx[INFINIMAT_START + 1] = 0;         // Ch2: Red
+        dmx[INFINIMAT_START + 2] = 0;         // Ch3: Green
+        dmx[INFINIMAT_START + 3] = 0;         // Ch4: Blue
+        dmx[INFINIMAT_START + 4] = 255;       // Ch5: White
+        dmx[INFINIMAT_START + 5] = 128;       // Ch6: Warm White
 
         let packet = artnet_dmx_packet(0, &dmx);
         let _ = self.socket.send_to(&packet, ARTNET_ADDR);

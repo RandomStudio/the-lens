@@ -55,8 +55,8 @@ fn main() {
     while viewer.is_open() {
         let angle = receiver.angle();
         let _frame_indices = viewer.render(angle);
-        print!("\rAngle: {:6.2}°, indices: {:?}", angle, _frame_indices);
         let brightness = viewer.brightness_at_angle(angle);
+        print!("\rAngle: {:6.2}°, indices: {:?}, brightness: {:.3}", angle, _frame_indices, brightness.unwrap_or(1.0));
         let scale = viewer.scale_at_angle(angle);
         if let Some(ref l) = light {
             l.update(brightness.unwrap_or(1.0));

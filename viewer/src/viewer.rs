@@ -285,7 +285,7 @@ impl Viewer {
             let (x, y, w, h) = display_bounds(display);
             seq.set_dimensions(w, h);
 
-            let mut win = Window::new(&format!("Window {}", i), w, h, WindowOptions::default())
+            let mut win = Window::new(&format!("Window {}", i), w, h, WindowOptions { resize: true, ..WindowOptions::default() })
                 .unwrap_or_else(|_| panic!("failed to create window {}", i));
             win.set_position(x, y);
             win.set_target_fps(60);
@@ -303,16 +303,10 @@ impl Viewer {
     }
 
     pub fn render(&mut self, angle: f64) {
-        for ((win, seq), dim) in self.windows.iter_mut()
+        for ((win, seq), &(w, h)) in self.windows.iter_mut()
             .zip(self.sequences.iter_mut())
-            .zip(self.dims.iter_mut())
+            .zip(self.dims.iter())
         {
-            let (w, h) = win.get_size();
-            if (w, h) != *dim {
-                seq.set_dimensions(w, h);
-                *dim = (w, h);
-            }
-            let (w, h) = *dim;
             let hue_color = seq.hue_color_at_angle(angle);
             let hue_opacity = seq.hue_opacity;
             let scale = seq.scale_factor();

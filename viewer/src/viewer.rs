@@ -366,7 +366,7 @@ impl Viewer {
 
         let (debug_window, debug_font) = if is_debug_display {
             let mut win = Window::new("Debug", DEBUG_WIN_W, DEBUG_WIN_H,
-                WindowOptions { resize: false, ..WindowOptions::default() })
+                WindowOptions { resize: true, ..WindowOptions::default() })
                 .unwrap_or_else(|_| panic!("failed to create debug window"));
             win.set_target_fps(30);
 

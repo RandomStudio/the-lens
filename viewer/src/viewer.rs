@@ -30,7 +30,7 @@ pub fn display_bounds(index: usize) -> (isize, isize, usize, usize) {
 
 #[cfg(target_os = "macos")]
 fn make_fullscreen(window: &Window) {
-    use objc::{msg_send, sel, sel_impl, runtime::Object};
+    use objc::{class, msg_send, sel, sel_impl, runtime::Object};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
     let Ok(handle) = window.window_handle() else { return };
@@ -40,10 +40,13 @@ fn make_fullscreen(window: &Window) {
         let ns_view: *mut Object = h.ns_view.as_ptr() as *mut Object;
         let ns_window: *mut Object = msg_send![ns_view, window];
 
-        // NSWindowCollectionBehaviorFullScreenPrimary = 1 << 7
-        let behavior: usize = msg_send![ns_window, collectionBehavior];
-        let () = msg_send![ns_window, setCollectionBehavior: behavior | (1usize << 7)];
-        let () = msg_send![ns_window, toggleFullScreen: std::ptr::null::<Object>()];
+        // Place window above menu bar and all system UI (NSScreenSaverWindowLevel = 1000)
+        let () = msg_send![ns_window, setLevel: 1000i64];
+
+        // Hide dock and menu bar completely (must be combined per Apple docs)
+        // NSApplicationPresentationHideDock = 1 << 1, NSApplicationPresentationHideMenuBar = 1 << 3
+        let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
+        let () = msg_send![app, setPresentationOptions: 10usize];
     }
 }
 

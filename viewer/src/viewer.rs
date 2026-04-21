@@ -207,21 +207,25 @@ fn decode_frame(path: &Path, width: usize, height: usize) -> Vec<u32> {
 
     let img_w = img.width() as usize;
     let img_h = img.height() as usize;
-    let src_y0 = if img_h > height { (img_h - height) / 2 } else { 0 };
-    let dst_y0 = if img_h < height { (height - img_h) / 2 } else { 0 };
-    let rows = img_h.min(height);
-    let cols = img_w.min(width);
+
+    // Scale so width fills exactly; height overflows top/bottom equally (cover behavior).
+    let scale = width as f64 / img_w as f64;
+    let scaled_h = (img_h as f64 * scale).round() as usize;
+    let y_src_offset = if scaled_h > height { (scaled_h - height) / 2 } else { 0 };
+    let y_dst_offset = if scaled_h < height { (height - scaled_h) / 2 } else { 0 };
+    let visible_rows = scaled_h.min(height);
 
     let mut canvas = vec![0u32; width * height];
     let raw = img.as_raw();
-    let stride = img_w * 4;
 
-    for out_row in 0..rows {
-        let src = (src_y0 + out_row) * stride;
-        let dst = (dst_y0 + out_row) * width;
-        for col in 0..cols {
-            let p = src + col * 4;
-            canvas[dst + col] =
+    for oy in 0..visible_rows {
+        let scaled_y = oy + y_src_offset;
+        let sy = ((scaled_y as f64 / scale) as usize).min(img_h - 1);
+        let dst_row = oy + y_dst_offset;
+        for ox in 0..width {
+            let sx = ((ox as f64 / scale) as usize).min(img_w - 1);
+            let p = (sy * img_w + sx) * 4;
+            canvas[dst_row * width + ox] =
                 ((raw[p] as u32) << 16) | ((raw[p + 1] as u32) << 8) | (raw[p + 2] as u32);
         }
     }

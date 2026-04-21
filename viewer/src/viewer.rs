@@ -5,7 +5,7 @@ use std::path::Path;
 const TOTAL_FRAMES: usize = 60;
 
 pub struct ImageSequence {
-    frames: Vec<Vec<u32>>,
+  frames: Vec<Vec<u32>>,
 }
 
 impl ImageSequence {
@@ -77,6 +77,10 @@ impl ImageSequence {
         let n = self.frames.len();
         let idx = (angle.rem_euclid(360.0) / 360.0 * n as f64) as usize;
         &self.frames[idx.min(n - 1)]
+    }
+
+    pub fn frame_count(&self) -> usize {
+        self.frames.len()
     }
 }
 

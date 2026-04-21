@@ -22,6 +22,7 @@ const WINDOW_2_Y: isize = 0;
 fn main() {
     let seq1 = ImageSequence::load(IMAGE_SEQUENCE_FOLDER_1, WINDOW_1_W, WINDOW_1_H);
     let seq2 = ImageSequence::load(IMAGE_SEQUENCE_FOLDER_2, WINDOW_2_W, WINDOW_2_H);
+    println!("Loaded {} frames for sequence 1, {} frames for sequence 2", seq1.frame_count(), seq2.frame_count());
 
     let rotator = Rotator::start();
     let light = Light::new();
@@ -33,6 +34,7 @@ fn main() {
 
     while viewer.is_open() {
         let angle = rotator.angle();
+        println!("Angle: {:.2}", angle);
         viewer.render(angle);
         light.update(angle);
     }

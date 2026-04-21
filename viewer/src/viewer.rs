@@ -55,11 +55,11 @@ pub struct ImageSequence {
     in_flight: HashSet<usize>,
     result_tx: mpsc::Sender<(usize, Vec<u32>)>,
     result_rx: mpsc::Receiver<(usize, Vec<u32>)>,
-    index_transform: fn(usize, usize) -> usize,
+    index_transform: fn(isize, isize) -> isize,
 }
 
 impl ImageSequence {
-    pub fn load(folder: &str, index_transform: fn(usize, usize) -> usize) -> Self {
+    pub fn load(folder: &str, index_transform: fn(isize, isize) -> isize) -> Self {
         let path = Path::new(folder);
         let (tx, rx) = mpsc::channel();
 
@@ -114,7 +114,7 @@ impl ImageSequence {
         }
     }
 
-    pub fn set_index_transform(&mut self, f: fn(usize, usize) -> usize) {
+    pub fn set_index_transform(&mut self, f: fn(isize, isize) -> isize) {
         self.index_transform = f;
     }
 
@@ -135,7 +135,8 @@ impl ImageSequence {
 
         let n = self.paths.len();
         let idx = ((angle.rem_euclid(360.0) / 360.0) * n as f64) as usize;
-        let idx = (self.index_transform)(idx.min(n - 1), n);
+        let idx = (self.index_transform)(idx.min(n - 1) as isize, n as isize)
+            .rem_euclid(n as isize) as usize;
 
         while let Ok((i, frame)) = self.result_rx.try_recv() {
             self.in_flight.remove(&i);

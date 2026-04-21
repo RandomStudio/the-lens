@@ -34,6 +34,9 @@ fn main() {
         if let Some(hue) = s.hue_shift {
             seq = seq.hue_shift(hue);
         }
+        if let Some(scale) = s.scale {
+            seq = seq.scale(scale);
+        }
         println!("[INFO] '{}' on display {}: {} frames", s.path, s.display, seq.frame_count());
         (seq, s.display)
     }).collect();

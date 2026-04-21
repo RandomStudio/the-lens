@@ -58,6 +58,7 @@ pub struct ImageSequence {
     result_rx: mpsc::Receiver<(usize, Vec<u32>)>,
     index_transform: fn(isize, isize) -> isize,
     hue_shift: Option<i32>,
+    scale: Option<f64>,
 }
 
 impl ImageSequence {
@@ -96,6 +97,7 @@ impl ImageSequence {
             result_tx: tx, result_rx: rx,
             index_transform,
             hue_shift: None,
+            scale: None,
         }
     }
 
@@ -115,12 +117,22 @@ impl ImageSequence {
             result_tx: tx, result_rx: rx,
             index_transform: |idx, _n| idx,
             hue_shift: None,
+            scale: None,
         }
     }
 
     pub fn hue_shift(mut self, start_hue: i32) -> Self {
         self.hue_shift = Some(start_hue);
         self
+    }
+
+    pub fn scale(mut self, factor: f64) -> Self {
+        self.scale = Some(factor);
+        self
+    }
+
+    pub fn scale_factor(&self) -> Option<f64> {
+        self.scale
     }
 
     pub fn hue_color_at_angle(&self, angle: f64) -> Option<(u8, u8, u8)> {
@@ -242,6 +254,22 @@ fn hue_to_rgb(hue: f64) -> (u8, u8, u8) {
     ((r * 255.0).round() as u8, (g * 255.0).round() as u8, (b * 255.0).round() as u8)
 }
 
+fn scale_from_center(src: &[u32], w: usize, h: usize, scale: f64) -> Vec<u32> {
+    let cx = w as f64 / 2.0;
+    let cy = h as f64 / 2.0;
+    let mut out = vec![0u32; w * h];
+    for oy in 0..h {
+        for ox in 0..w {
+            let sx = (cx + (ox as f64 - cx) / scale).round() as isize;
+            let sy = (cy + (oy as f64 - cy) / scale).round() as isize;
+            if sx >= 0 && sx < w as isize && sy >= 0 && sy < h as isize {
+                out[oy * w + ox] = src[sy as usize * w + sx as usize];
+            }
+        }
+    }
+    out
+}
+
 fn blend_hue(pixel: u32, (hr, hg, hb): (u8, u8, u8), alpha: f64) -> u32 {
     let ia = 1.0 - alpha;
     let r = (((pixel >> 16) & 0xff) as f64 * ia + hr as f64 * alpha) as u32;
@@ -293,13 +321,21 @@ impl Viewer {
             .zip(self.dims.iter())
         {
             let hue_color = seq.hue_color_at_angle(angle);
+            let scale = seq.scale_factor();
             let frame = seq.frame_at_angle(angle);
             let blended: Vec<u32>;
+            let scaled: Vec<u32>;
             let buf: &[u32] = if let Some(color) = hue_color {
                 blended = frame.iter().map(|&px| blend_hue(px, color, HUE_OVERLAY_ALPHA)).collect();
                 &blended
             } else {
                 frame
+            };
+            let buf: &[u32] = if let Some(s) = scale {
+                scaled = scale_from_center(buf, w, h, s);
+                &scaled
+            } else {
+                buf
             };
             win.update_with_buffer(buf, w, h)
                 .unwrap_or_else(|e| eprintln!("[Viewer] update failed: {}", e));

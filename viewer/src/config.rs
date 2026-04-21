@@ -14,6 +14,7 @@ pub struct SequenceConfig {
     pub path: String,
     pub display: usize,
     pub hue_shift: Option<i32>,
+    pub scale: Option<f64>,
     /// Named index transform. Options: see `resolve_index_transform()`
     pub index_transform: Option<String>,
 }

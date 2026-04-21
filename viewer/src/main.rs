@@ -1,4 +1,5 @@
 mod config;
+mod debug_receiver;
 mod light;
 mod mqtt_receiver;
 mod mqtt_sender;
@@ -23,7 +24,7 @@ fn main() {
     };
 
     let mqtt_sender = if cfg.mqtt_send {
-        Some(MqttSender::new(cfg.mqtt))
+        Some(MqttSender::new(cfg.mqtt.clone()))
     } else {
         None
     };
@@ -40,6 +41,7 @@ fn main() {
         if let Some(bwr) = s.brightness_with_rotate {
             seq = seq.with_brightness_with_rotate(bwr.target_index, bwr.start_brightness, bwr.end_brightness);
         }
+        seq.match_angle = s.match_angle;
         println!("[INFO] '{}' on display {}: {} frames", s.path, s.display, seq.frame_count());
         (seq, s.display)
     }).collect();
@@ -51,6 +53,9 @@ fn main() {
     };
 
     let mut viewer = Viewer::new(sequences, cfg.is_debug_display);
+    if let Some(dr) = debug_receiver::DebugReceiver::new(&cfg.mqtt) {
+        viewer.set_debug_state(dr.state);
+    }
 
     while viewer.is_open() {
         let angle = receiver.angle();

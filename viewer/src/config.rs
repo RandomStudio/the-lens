@@ -36,6 +36,9 @@ pub struct SequenceConfig {
     pub brightness_with_rotate: Option<BrightnessWithRotateConfig>,
     /// Named index transform. Options: see `resolve_index_transform()`
     pub index_transform: Option<String>,
+    /// When true, the rendered frame is rotated to match the current angle.
+    #[serde(default)]
+    pub match_angle: bool,
 }
 
 #[derive(Deserialize)]

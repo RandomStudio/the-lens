@@ -47,6 +47,8 @@ pub struct Config {
     pub mqtt_send: bool,
     pub light_send: bool,
     pub sequences: Vec<SequenceConfig>,
+    #[serde(default)]
+    pub is_debug_display: bool,
 }
 
 impl Config {

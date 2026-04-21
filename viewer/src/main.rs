@@ -56,11 +56,12 @@ fn main() {
         None
     };
 
-    let mut viewer = Viewer::new(sequences);
+    let mut viewer = Viewer::new(sequences, cfg.is_debug_display);
 
     while viewer.is_open() {
         let angle = receiver.angle();
         let _frame_indices = viewer.render(angle);
+        print!("\rAngle: {:6.2}°, indices: {:?}", angle, _frame_indices);
         if let Some(ref l) = light {
             l.update(angle);
         }

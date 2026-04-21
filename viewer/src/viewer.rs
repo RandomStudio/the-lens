@@ -3,6 +3,9 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
 
+const DEBUG_WIN_W: usize = 900;
+const DEBUG_WIN_H: usize = 450;
+
 const CACHE_RADIUS: usize = 50;
 const DEFAULT_HUE_OPACITY: f64 = 0.35;
 
@@ -333,14 +336,62 @@ fn blend_hue(pixel: u32, (hr, hg, hb): (u8, u8, u8), alpha: f64) -> u32 {
     (r << 16) | (g << 8) | b
 }
 
+fn scale_frame_to(src: &[u32], sw: usize, sh: usize, tw: usize, th: usize) -> Vec<u32> {
+    if sw == 0 || sh == 0 { return vec![0u32; tw * th]; }
+    let mut out = vec![0u32; tw * th];
+    for dy in 0..th {
+        let sy = (dy * sh) / th;
+        for dx in 0..tw {
+            let sx = (dx * sw) / tw;
+            out[dy * tw + dx] = src[(sy * sw + sx).min(src.len() - 1)];
+        }
+    }
+    out
+}
+
+fn draw_text_to_buf(buf: &mut [u32], buf_w: usize, buf_h: usize,
+                    font: &fontdue::Font, size: f32,
+                    x: i32, baseline_y: i32, text: &str, color: u32) {
+    let cr = ((color >> 16) & 0xff) as f32;
+    let cg = ((color >>  8) & 0xff) as f32;
+    let cb = ( color        & 0xff) as f32;
+    let mut cx = x;
+    for ch in text.chars() {
+        let (metrics, bitmap) = font.rasterize(ch, size);
+        let glyph_top = baseline_y - metrics.ymin - metrics.height as i32;
+        for row in 0..metrics.height {
+            let py = glyph_top + row as i32;
+            if py < 0 || py >= buf_h as i32 { continue; }
+            for col in 0..metrics.width {
+                let px = cx + col as i32 + metrics.xmin;
+                if px < 0 || px >= buf_w as i32 { continue; }
+                let alpha = bitmap[row * metrics.width + col];
+                if alpha == 0 { continue; }
+                let a = alpha as f32 / 255.0;
+                let idx = py as usize * buf_w + px as usize;
+                let bg = buf[idx];
+                let br = ((bg >> 16) & 0xff) as f32;
+                let bg_g = ((bg >>  8) & 0xff) as f32;
+                let bb = ( bg         & 0xff) as f32;
+                buf[idx] = (((br + (cr - br) * a) as u32) << 16)
+                          | (((bg_g + (cg - bg_g) * a) as u32) << 8)
+                          |  ((bb + (cb - bb) * a) as u32);
+            }
+        }
+        cx += metrics.advance_width as i32;
+    }
+}
+
 pub struct Viewer {
     windows: Vec<Window>,
     sequences: Vec<ImageSequence>,
     dims: Vec<(usize, usize)>,
+    debug_window: Option<Window>,
+    debug_font: Option<fontdue::Font>,
 }
 
 impl Viewer {
-    pub fn new(mut entries: Vec<(ImageSequence, usize)>) -> Self {
+    pub fn new(mut entries: Vec<(ImageSequence, usize)>, is_debug_display: bool) -> Self {
         let mut windows = Vec::with_capacity(entries.len());
         let mut sequences = Vec::with_capacity(entries.len());
         let mut dims = Vec::with_capacity(entries.len());
@@ -359,7 +410,31 @@ impl Viewer {
             dims.push((w, h));
         }
 
-        Self { windows, sequences, dims }
+        let (debug_window, debug_font) = if is_debug_display {
+            let mut win = Window::new("Debug", DEBUG_WIN_W, DEBUG_WIN_H,
+                WindowOptions { resize: false, ..WindowOptions::default() })
+                .unwrap_or_else(|_| panic!("failed to create debug window"));
+            win.set_target_fps(30);
+
+            let font_paths = [
+                "/System/Library/Fonts/Monaco.ttf",
+                "/System/Library/Fonts/Menlo.ttc",
+                "/System/Library/Fonts/Helvetica.ttc",
+            ];
+            let font = font_paths.iter().find_map(|path| {
+                std::fs::read(path).ok().and_then(|data| {
+                    fontdue::Font::from_bytes(data.as_slice(), fontdue::FontSettings::default()).ok()
+                })
+            });
+            if font.is_none() {
+                eprintln!("[Debug] No system font found; text will not render.");
+            }
+            (Some(win), font)
+        } else {
+            (None, None)
+        };
+
+        Self { windows, sequences, dims, debug_window, debug_font }
     }
 
     pub fn is_open(&self) -> bool {
@@ -402,6 +477,68 @@ impl Viewer {
             win.update_with_buffer(buf, w, h)
                 .unwrap_or_else(|e| eprintln!("[Viewer] update failed: {}", e));
         }
+
+        if self.debug_window.is_some() {
+            let (fw, fh) = self.dims.first().copied().unwrap_or((0, 0));
+            let (frame, brightness) = if let Some(seq) = self.sequences.first_mut() {
+                let frame = seq.frame_at_angle(angle).to_vec();
+                let b = seq.dynamic_brightness_at_angle(angle);
+                (frame, b)
+            } else {
+                (vec![], None)
+            };
+            self.render_debug(angle, brightness, &frame, fw, fh);
+        }
+
         indices
+    }
+
+    fn render_debug(&mut self, angle: f64, brightness: Option<f64>,
+                    frame: &[u32], fw: usize, fh: usize) {
+        let mut buf = vec![0x111111u32; DEBUG_WIN_W * DEBUG_WIN_H];
+
+        // Right side: 40vw × 40vw image preview
+        let preview_dim = DEBUG_WIN_W * 40 / 100;
+        let preview_x = DEBUG_WIN_W - preview_dim;
+        let preview_y = (DEBUG_WIN_H - preview_dim) / 2;
+        if fw > 0 && fh > 0 && !frame.is_empty() {
+            let scaled = scale_frame_to(frame, fw, fh, preview_dim, preview_dim);
+            for py in 0..preview_dim {
+                let dst_y = preview_y + py;
+                if dst_y >= DEBUG_WIN_H { break; }
+                buf[dst_y * DEBUG_WIN_W + preview_x..dst_y * DEBUG_WIN_W + preview_x + preview_dim]
+                    .copy_from_slice(&scaled[py * preview_dim..(py + 1) * preview_dim]);
+            }
+        }
+
+        // Left centre: three info lines
+        let font_size = 26.0f32;
+        let line_height = 44usize;
+        let lines = [
+            format!("angle:      {:.1}", angle),
+            brightness.map_or_else(
+                || "brightness: N/A".to_string(),
+                |b| format!("brightness: {:.2}", b),
+            ),
+            "video:      false".to_string(),
+        ];
+        let total_h = lines.len() * line_height;
+        let text_x = 50i32;
+        let text_start_y = ((DEBUG_WIN_H - total_h) / 2 + line_height) as i32;
+
+        if let Some(font) = &self.debug_font {
+            for (i, line) in lines.iter().enumerate() {
+                let y = text_start_y + (i * line_height) as i32;
+                draw_text_to_buf(&mut buf, DEBUG_WIN_W, DEBUG_WIN_H, font, font_size,
+                                 text_x, y, line, 0xEEEEEE);
+            }
+        }
+
+        if let Some(win) = &mut self.debug_window {
+            if win.is_open() {
+                win.update_with_buffer(&buf, DEBUG_WIN_W, DEBUG_WIN_H)
+                    .unwrap_or_else(|e| eprintln!("[Debug] update failed: {}", e));
+            }
+        }
     }
 }

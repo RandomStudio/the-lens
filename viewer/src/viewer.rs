@@ -1,21 +1,32 @@
+use minifb::{Key, Window, WindowOptions};
 use std::collections::{HashMap, HashSet};
-use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
-use winit::event::{ElementState, Event, WindowEvent};
-use winit::event_loop::{ControlFlow, EventLoop};
-use winit::keyboard::{Key, NamedKey};
-use winit::window::{Fullscreen, WindowBuilder};
-
-use crate::light::Light;
-use crate::mqtt_sender::MqttSender;
-use crate::receiver::AngleReceiver;
 
 const CACHE_RADIUS: usize = 50;
 const DEFAULT_HUE_OPACITY: f64 = 0.35;
 
-type SbContext = softbuffer::Context<Arc<winit::window::Window>>;
-type SbSurface = softbuffer::Surface<Arc<winit::window::Window>, Arc<winit::window::Window>>;
+pub fn display_bounds(index: usize) -> (isize, isize, usize, usize) {
+    #[cfg(target_os = "macos")]
+    {
+        use core_graphics::display::CGDisplay;
+        let ids = CGDisplay::active_displays().expect("failed to list displays");
+        let mut displays: Vec<(isize, isize, usize, usize)> = ids
+            .iter()
+            .map(|&id| {
+                let b = CGDisplay::new(id).bounds();
+                (b.origin.x as isize, b.origin.y as isize,
+                 b.size.width as usize, b.size.height as usize)
+            })
+            .collect();
+        displays.sort_by_key(|&(x, y, _, _)| (x, y));
+        assert!(index < displays.len(),
+            "display {} requested but only {} available", index, displays.len());
+        return displays[index];
+    }
+    #[cfg(not(target_os = "macos"))]
+    panic!("display_bounds not implemented for this platform");
+}
 
 pub struct ImageSequence {
     paths: Arc<Vec<PathBuf>>,
@@ -256,132 +267,64 @@ fn blend_hue(pixel: u32, (hr, hg, hb): (u8, u8, u8), alpha: f64) -> u32 {
     (r << 16) | (g << 8) | b
 }
 
-struct DisplayEntry {
-    surface: SbSurface,
-    _context: SbContext,
-    _window: Arc<winit::window::Window>,
-    seq: ImageSequence,
-    w: usize,
-    h: usize,
-}
-
 pub struct Viewer {
-    entries: Vec<DisplayEntry>,
+    windows: Vec<Window>,
+    sequences: Vec<ImageSequence>,
+    dims: Vec<(usize, usize)>,
 }
 
 impl Viewer {
-    pub fn new(event_loop: &EventLoop<()>, mut sequences: Vec<(ImageSequence, usize)>) -> Self {
-        let mut monitors: Vec<_> = event_loop.available_monitors().collect();
-        monitors.sort_by_key(|m| { let p = m.position(); (p.x, p.y) });
+    pub fn new(mut entries: Vec<(ImageSequence, usize)>) -> Self {
+        let mut windows = Vec::with_capacity(entries.len());
+        let mut sequences = Vec::with_capacity(entries.len());
+        let mut dims = Vec::with_capacity(entries.len());
 
-        let entries = sequences.drain(..).enumerate().map(|(i, (mut seq, display_idx))| {
-            assert!(
-                display_idx < monitors.len(),
-                "display {} requested but only {} available", display_idx, monitors.len()
-            );
-            let monitor = monitors[display_idx].clone();
-            let size = monitor.size();
-            let w = size.width as usize;
-            let h = size.height as usize;
+        for (i, (mut seq, display)) in entries.drain(..).enumerate() {
+            let (x, y, w, h) = display_bounds(display);
             seq.set_dimensions(w, h);
 
-            println!("[INFO] Window {} on display {} ({}x{})", i, display_idx, w, h);
+            let mut win = Window::new(&format!("Window {}", i), w, h, WindowOptions::default())
+                .unwrap_or_else(|_| panic!("failed to create window {}", i));
+            win.set_position(x, y);
+            win.set_target_fps(60);
 
-            let window = Arc::new(
-                WindowBuilder::new()
-                    .with_fullscreen(Some(Fullscreen::Borderless(Some(monitor))))
-                    .build(event_loop)
-                    .unwrap_or_else(|e| panic!("failed to create window {}: {}", i, e))
-            );
+            windows.push(win);
+            sequences.push(seq);
+            dims.push((w, h));
+        }
 
-            let context = softbuffer::Context::new(window.clone())
-                .expect("failed to create softbuffer context");
-            let mut surface = softbuffer::Surface::new(&context, window.clone())
-                .expect("failed to create softbuffer surface");
-            surface.resize(
-                NonZeroU32::new(w as u32).unwrap(),
-                NonZeroU32::new(h as u32).unwrap(),
-            ).expect("failed to resize surface");
-
-            DisplayEntry { surface, _context: context, _window: window, seq, w, h }
-        }).collect();
-
-        Self { entries }
+        Self { windows, sequences, dims }
     }
 
-    pub fn run(
-        mut self,
-        event_loop: EventLoop<()>,
-        mut receiver: Box<dyn AngleReceiver>,
-        light: Option<Light>,
-        mqtt_sender: Option<MqttSender>,
-    ) {
-        let _ = event_loop.run(move |event, elwt| {
-            elwt.set_control_flow(ControlFlow::Poll);
+    pub fn is_open(&self) -> bool {
+        self.windows.iter().all(|w| w.is_open() && !w.is_key_down(Key::Escape) && !w.is_key_down(Key::Q))
+    }
 
-            match event {
-                Event::AboutToWait => {
-                    let angle = receiver.angle();
-
-                    for entry in &mut self.entries {
-                        let hue_color = entry.seq.hue_color_at_angle(angle);
-                        let hue_opacity = entry.seq.hue_opacity;
-                        let scale = entry.seq.scale_factor();
-                        let frame = entry.seq.frame_at_angle(angle);
-
-                        let blended: Vec<u32>;
-                        let scaled: Vec<u32>;
-                        let buf: &[u32] = if let Some(color) = hue_color {
-                            blended = frame.iter().map(|&px| blend_hue(px, color, hue_opacity)).collect();
-                            &blended
-                        } else {
-                            frame
-                        };
-                        let buf: &[u32] = if let Some(s) = scale {
-                            scaled = scale_from_center(buf, entry.w, entry.h, s);
-                            &scaled
-                        } else {
-                            buf
-                        };
-
-                        if let Ok(mut sb_buf) = entry.surface.buffer_mut() {
-                            sb_buf.copy_from_slice(buf);
-                            let _ = sb_buf.present();
-                        }
-                    }
-
-                    if let Some(ref l) = light { l.update(angle); }
-                    if let Some(ref s) = mqtt_sender { s.update(angle); }
-                }
-
-                Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
-                    elwt.exit();
-                }
-
-                Event::WindowEvent {
-                    event: WindowEvent::KeyboardInput {
-                        event: winit::event::KeyEvent {
-                            state: ElementState::Pressed,
-                            ref logical_key,
-                            ..
-                        },
-                        ..
-                    },
-                    ..
-                } => {
-                    if matches!(logical_key, Key::Named(NamedKey::Escape))
-                        || matches!(logical_key, Key::Character(c) if c.as_str() == "q")
-                    {
-                        elwt.exit();
-                    }
-                }
-
-                Event::LoopExiting => {
-                    if let Some(ref l) = light { l.turn_off(); }
-                }
-
-                _ => {}
-            }
-        });
+    pub fn render(&mut self, angle: f64) {
+        for ((win, seq), &(w, h)) in self.windows.iter_mut()
+            .zip(self.sequences.iter_mut())
+            .zip(self.dims.iter())
+        {
+            let hue_color = seq.hue_color_at_angle(angle);
+            let hue_opacity = seq.hue_opacity;
+            let scale = seq.scale_factor();
+            let frame = seq.frame_at_angle(angle);
+            let blended: Vec<u32>;
+            let scaled: Vec<u32>;
+            let buf: &[u32] = if let Some(color) = hue_color {
+                blended = frame.iter().map(|&px| blend_hue(px, color, hue_opacity)).collect();
+                &blended
+            } else {
+                frame
+            };
+            let buf: &[u32] = if let Some(s) = scale {
+                scaled = scale_from_center(buf, w, h, s);
+                &scaled
+            } else {
+                buf
+            };
+            win.update_with_buffer(buf, w, h)
+                .unwrap_or_else(|e| eprintln!("[Viewer] update failed: {}", e));
+        }
     }
 }

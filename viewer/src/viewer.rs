@@ -395,6 +395,10 @@ impl Viewer {
         self.sequences.first()?.dynamic_brightness_at_angle(angle)
     }
 
+    pub fn scale_at_angle(&self, angle: f64) -> Option<f64> {
+        self.sequences.first()?.dynamic_scale_at_angle(angle)
+    }
+
     pub fn is_open(&self) -> bool {
         if self.windows.is_empty() {
             self.debug_window.as_ref()
@@ -435,21 +439,22 @@ impl Viewer {
 
         if self.debug_window.is_some() {
             let (fw, fh) = self.dims.first().copied().unwrap_or((0, 0));
-            let (frame, brightness, index) = if let Some(seq) = self.sequences.first_mut() {
+            let (frame, brightness, scale, index) = if let Some(seq) = self.sequences.first_mut() {
                 let index = seq.frame_index_at_angle(angle);
                 let frame = seq.frame_at_angle(angle).to_vec();
                 let b = seq.dynamic_brightness_at_angle(angle);
-                (frame, b, index)
+                let s = seq.dynamic_scale_at_angle(angle);
+                (frame, b, s, index)
             } else {
-                (vec![], None, 0)
+                (vec![], None, None, 0)
             };
-            self.render_debug(angle, brightness, index, &frame, fw, fh);
+            self.render_debug(angle, brightness, scale, index, &frame, fw, fh);
         }
 
         indices
     }
 
-    fn render_debug(&mut self, angle: f64, brightness: Option<f64>, index: usize,
+    fn render_debug(&mut self, angle: f64, brightness: Option<f64>, scale: Option<f64>, index: usize,
                     frame: &[u32], fw: usize, fh: usize) {
         let mut buf = vec![0x111111u32; DEBUG_WIN_W * DEBUG_WIN_H];
 
@@ -476,6 +481,10 @@ impl Viewer {
             brightness.map_or_else(
                 || "brightness: N/A".to_string(),
                 |b| format!("brightness: {:.2}", b),
+            ),
+            scale.map_or_else(
+                || "scale:      N/A".to_string(),
+                |s| format!("scale:      {:.2}", s),
             ),
             "video:      false".to_string(),
         ];

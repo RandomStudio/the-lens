@@ -6,6 +6,7 @@
     "broker": "10.112.10.10",
     "port": 1883,
     "topic": "prototype/lens/angle",
+    "debug_topic": "prototype/lens/debug",
     "username": "mqtt",
     "password": "password",
     "lerp_speed": 8.0

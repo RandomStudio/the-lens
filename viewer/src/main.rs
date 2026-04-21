@@ -56,11 +56,14 @@ fn main() {
         let angle = receiver.angle();
         let _frame_indices = viewer.render(angle);
         print!("\rAngle: {:6.2}°, indices: {:?}", angle, _frame_indices);
+        let brightness = viewer.brightness_at_angle(angle);
+        let scale = viewer.scale_at_angle(angle);
         if let Some(ref l) = light {
-            l.update(viewer.brightness_at_angle(angle).unwrap_or(1.0));
+            l.update(brightness.unwrap_or(1.0));
         }
         if let Some(ref s) = mqtt_sender {
             s.update(angle);
+            s.publish_debug(brightness, scale);
         }
     }
 

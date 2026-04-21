@@ -7,6 +7,7 @@ pub struct MqttConfig {
     pub broker: String,
     pub port: u16,
     pub topic: String,
+    pub debug_topic: Option<String>,
     pub username: String,
     pub password: String,
     #[serde(default = "default_lerp_speed")]

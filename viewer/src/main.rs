@@ -10,7 +10,7 @@ mod viewer;
 use config::{Config, resolve_index_transform};
 use light::Light;
 use mqtt_receiver::MqttReceiver;
-use mqtt_sender::MqttSender;
+use mqtt_sender::{DebugSender, MqttSender};
 use receiver::AngleReceiver;
 use rotator::Rotator;
 use viewer::{ImageSequence, Viewer};
@@ -24,10 +24,11 @@ fn main() {
     };
 
     let mqtt_sender = if cfg.mqtt_send {
-        Some(MqttSender::new(cfg.mqtt.clone()))
+        Some(MqttSender::new(&cfg.mqtt))
     } else {
         None
     };
+    let debug_sender = DebugSender::new(&cfg.mqtt);
 
     let sequences: Vec<(ImageSequence, usize)> = cfg.sequences.into_iter().map(|s| {
         let transform = resolve_index_transform(s.index_transform.as_deref());
@@ -68,7 +69,9 @@ fn main() {
         }
         if let Some(ref s) = mqtt_sender {
             s.update(angle);
-            s.publish_debug(brightness, scale);
+        }
+        if let Some(ref s) = debug_sender {
+            s.publish(brightness, scale);
         }
     }
 

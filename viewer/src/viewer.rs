@@ -292,26 +292,6 @@ fn apply_brightness(pixel: u32, brightness: f64) -> u32 {
     (r << 16) | (g << 8) | b
 }
 
-fn rotate_frame(src: &[u32], w: usize, h: usize, angle_deg: f64) -> Vec<u32> {
-    let cx = w as f64 / 2.0;
-    let cy = h as f64 / 2.0;
-    let rad = -angle_deg.to_radians();
-    let (sin, cos) = rad.sin_cos();
-    let mut out = vec![0u32; w * h];
-    for oy in 0..h {
-        for ox in 0..w {
-            let dx = ox as f64 - cx;
-            let dy = oy as f64 - cy;
-            let sx = (cos * dx - sin * dy + cx).round() as isize;
-            let sy = (sin * dx + cos * dy + cy).round() as isize;
-            if sx >= 0 && sx < w as isize && sy >= 0 && sy < h as isize {
-                out[oy * w + ox] = src[sy as usize * w + sx as usize];
-            }
-        }
-    }
-    out
-}
-
 fn scale_frame_to(src: &[u32], sw: usize, sh: usize, tw: usize, th: usize) -> Vec<u32> {
     if sw == 0 || sh == 0 { return vec![0u32; tw * th]; }
     let mut out = vec![0u32; tw * th];
@@ -445,19 +425,11 @@ impl Viewer {
         {
             let scale = seq.dynamic_scale_at_angle(angle).or_else(|| seq.scale_factor());
             let brightness = seq.dynamic_brightness_at_angle(angle);
-            let do_rotate = seq.match_angle;
             indices.push(seq.frame_index_at_angle(angle));
             let frame = seq.frame_at_angle(angle);
-            let rotated: Vec<u32>;
             let scaled: Vec<u32>;
             let brightened: Vec<u32>;
             let buf: &[u32] = frame;
-            let buf: &[u32] = if do_rotate {
-                rotated = rotate_frame(buf, w, h, angle);
-                &rotated
-            } else {
-                buf
-            };
             let buf: &[u32] = if let Some(s) = scale {
                 scaled = scale_from_center(buf, w, h, s);
                 &scaled

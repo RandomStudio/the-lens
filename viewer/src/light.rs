@@ -29,7 +29,7 @@ impl Light {
         let mut dmx = [0u8; 512];
 
         // Mode 4: RGBWW 8-bit
-        dmx[INFINIMAT_START]     = 255; // Ch1: Intensity
+        dmx[INFINIMAT_START]     = 60; // Ch1: Intensity
         dmx[INFINIMAT_START + 1] = r;   // Ch2: Red
         dmx[INFINIMAT_START + 2] = g;   // Ch3: Green
         dmx[INFINIMAT_START + 3] = b;   // Ch4: Blue

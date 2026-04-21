@@ -62,10 +62,6 @@ impl Rotator {
         Self { angle }
     }
 
-    pub(crate) fn shared(&self) -> Arc<AtomicU64> {
-        Arc::clone(&self.angle)
-    }
-
     pub fn angle(&self) -> f64 {
         f64::from_bits(self.angle.load(Ordering::Relaxed))
     }

@@ -34,8 +34,7 @@ fn main() {
 
     let rotator = Rotator::new();
     let light = Light::new();
-    let mqtt = MqttRotator::new(&rotator, username, password);
-    mqtt.start();
+    let mqtt = MqttRotator::new(username, password);
 
     let mut viewer = Viewer::new(seq1, LENS_DISPLAY, seq2, REMOTE_DISPLAY);
 

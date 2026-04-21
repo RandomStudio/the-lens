@@ -17,6 +17,15 @@
       "hue_shift": 0,
       "hue_opacity": 0.35,
       "scale": 1.0,
+      "scales_with_rotate": {
+        "target_index": 120,
+        "scale": 1.5
+      },
+      "brightness_with_rotate": {
+        "target_index": 120,
+        "start_brightness": 0.0,
+        "end_brightness": 1.0
+      },
       "index_transform": "reverse_quarter"
     }
   ]

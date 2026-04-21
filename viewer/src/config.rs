@@ -13,6 +13,19 @@ pub struct MqttConfig {
     pub lerp_speed: f64,
 }
 
+#[derive(Deserialize, Clone)]
+pub struct ScalesWithRotateConfig {
+    pub target_index: usize,
+    pub scale: f64,
+}
+
+#[derive(Deserialize, Clone)]
+pub struct BrightnessWithRotateConfig {
+    pub target_index: usize,
+    pub start_brightness: f64,
+    pub end_brightness: f64,
+}
+
 #[derive(Deserialize)]
 pub struct SequenceConfig {
     pub path: String,
@@ -20,6 +33,8 @@ pub struct SequenceConfig {
     pub hue_shift: Option<i32>,
     pub hue_opacity: Option<f64>,
     pub scale: Option<f64>,
+    pub scales_with_rotate: Option<ScalesWithRotateConfig>,
+    pub brightness_with_rotate: Option<BrightnessWithRotateConfig>,
     /// Named index transform. Options: see `resolve_index_transform()`
     pub index_transform: Option<String>,
 }

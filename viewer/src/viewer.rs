@@ -41,6 +41,8 @@ pub struct ImageSequence {
     hue_shift: Option<i32>,
     pub hue_opacity: f64,
     scale: Option<f64>,
+    scales_with_rotate: Option<(usize, f64)>,
+    brightness_with_rotate: Option<(usize, f64, f64)>,
 }
 
 impl ImageSequence {
@@ -81,6 +83,8 @@ impl ImageSequence {
             hue_shift: None,
             hue_opacity: DEFAULT_HUE_OPACITY,
             scale: None,
+            scales_with_rotate: None,
+            brightness_with_rotate: None,
         }
     }
 
@@ -102,6 +106,8 @@ impl ImageSequence {
             hue_shift: None,
             hue_opacity: DEFAULT_HUE_OPACITY,
             scale: None,
+            scales_with_rotate: None,
+            brightness_with_rotate: None,
         }
     }
 
@@ -122,6 +128,43 @@ impl ImageSequence {
 
     pub fn scale_factor(&self) -> Option<f64> {
         self.scale
+    }
+
+    pub fn with_scales_with_rotate(mut self, target_index: usize, scale: f64) -> Self {
+        self.scales_with_rotate = Some((target_index, scale));
+        self
+    }
+
+    pub fn dynamic_scale_at_angle(&self, angle: f64) -> Option<f64> {
+        let (target_index, max_scale) = self.scales_with_rotate?;
+        let n = self.paths.len();
+        if n == 0 { return None; }
+        let target_angle = (target_index as f64 / n as f64) * 360.0;
+        let delta = (angle - target_angle + 180.0).rem_euclid(360.0) - 180.0;
+        let dist = delta.abs();
+        let t = 1.0 - dist / 180.0;
+        // Cubic ease-in: slow change when far away, accelerates near target
+        let t_eased = t * t * t;
+        Some(1.0 + (max_scale - 1.0) * t_eased)
+    }
+
+    pub fn with_brightness_with_rotate(mut self, target_index: usize, start_brightness: f64, end_brightness: f64) -> Self {
+        self.brightness_with_rotate = Some((target_index, start_brightness, end_brightness));
+        self
+    }
+
+    pub fn dynamic_brightness_at_angle(&self, angle: f64) -> Option<f64> {
+        let (target_index, start_brightness, end_brightness) = self.brightness_with_rotate?;
+        let n = self.paths.len();
+        if n == 0 { return None; }
+        let target_angle = (target_index as f64 / n as f64) * 360.0;
+        let delta = (angle - target_angle + 180.0).rem_euclid(360.0) - 180.0;
+        let dist = delta.abs(); // 0 at target, 180 when fully opposite
+        let t = 1.0 - dist / 180.0; // 0 when opposite, 1 at target
+        // Quintic ease-in: stays near start_brightness for most of the range,
+        // then logarithmic-like acceleration in the final approach to the target
+        let t_eased = t.powf(5.0);
+        Some(start_brightness + (end_brightness - start_brightness) * t_eased)
     }
 
     pub fn hue_color_at_angle(&self, angle: f64) -> Option<(u8, u8, u8)> {
@@ -147,16 +190,26 @@ impl ImageSequence {
         self.paths.len()
     }
 
+    pub fn frame_index_at_angle(&self, angle: f64) -> usize {
+        if self.paths.is_empty() { return 0; }
+        let n = self.paths.len();
+        let idx = ((angle.rem_euclid(360.0) / 360.0) * n as f64) as usize;
+        (self.index_transform)(idx.min(n - 1) as isize, n as isize)
+            .rem_euclid(n as isize) as usize
+    }
+
+    pub fn frame_path_at_angle(&self, angle: f64) -> Option<&std::path::Path> {
+        if self.paths.is_empty() { return None; }
+        Some(&self.paths[self.frame_index_at_angle(angle)])
+    }
+
     pub fn frame_at_angle(&mut self, angle: f64) -> &[u32] {
         if self.paths.is_empty() {
             return &self.blank;
         }
 
         let n = self.paths.len();
-        let idx = ((angle.rem_euclid(360.0) / 360.0) * n as f64) as usize;
-        let idx = (self.index_transform)(idx.min(n - 1) as isize, n as isize)
-            .rem_euclid(n as isize) as usize;
-
+        let idx = self.frame_index_at_angle(angle);
         while let Ok((i, frame)) = self.result_rx.try_recv() {
             self.in_flight.remove(&i);
             self.cache.insert(i, frame);
@@ -265,6 +318,13 @@ fn scale_from_center(src: &[u32], w: usize, h: usize, scale: f64) -> Vec<u32> {
     out
 }
 
+fn apply_brightness(pixel: u32, brightness: f64) -> u32 {
+    let r = (((pixel >> 16) & 0xff) as f64 * brightness).min(255.0) as u32;
+    let g = (((pixel >>  8) & 0xff) as f64 * brightness).min(255.0) as u32;
+    let b = (( pixel        & 0xff) as f64 * brightness).min(255.0) as u32;
+    (r << 16) | (g << 8) | b
+}
+
 fn blend_hue(pixel: u32, (hr, hg, hb): (u8, u8, u8), alpha: f64) -> u32 {
     let ia = 1.0 - alpha;
     let r = (((pixel >> 16) & 0xff) as f64 * ia + hr as f64 * alpha) as u32;
@@ -306,17 +366,21 @@ impl Viewer {
         self.windows.iter().all(|w| w.is_open() && !w.is_key_down(Key::Escape) && !w.is_key_down(Key::Q))
     }
 
-    pub fn render(&mut self, angle: f64) {
+    pub fn render(&mut self, angle: f64) -> Vec<usize> {
+        let mut indices = Vec::with_capacity(self.sequences.len());
         for ((win, seq), &(w, h)) in self.windows.iter_mut()
             .zip(self.sequences.iter_mut())
             .zip(self.dims.iter())
         {
             let hue_color = seq.hue_color_at_angle(angle);
             let hue_opacity = seq.hue_opacity;
-            let scale = seq.scale_factor();
+            let scale = seq.dynamic_scale_at_angle(angle).or_else(|| seq.scale_factor());
+            let brightness = seq.dynamic_brightness_at_angle(angle);
+            indices.push(seq.frame_index_at_angle(angle));
             let frame = seq.frame_at_angle(angle);
             let blended: Vec<u32>;
             let scaled: Vec<u32>;
+            let brightened: Vec<u32>;
             let buf: &[u32] = if let Some(color) = hue_color {
                 blended = frame.iter().map(|&px| blend_hue(px, color, hue_opacity)).collect();
                 &blended
@@ -329,8 +393,15 @@ impl Viewer {
             } else {
                 buf
             };
+            let buf: &[u32] = if let Some(b) = brightness {
+                brightened = buf.iter().map(|&px| apply_brightness(px, b)).collect();
+                &brightened
+            } else {
+                buf
+            };
             win.update_with_buffer(buf, w, h)
                 .unwrap_or_else(|e| eprintln!("[Viewer] update failed: {}", e));
         }
+        indices
     }
 }

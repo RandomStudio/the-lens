@@ -40,6 +40,12 @@ fn main() {
         if let Some(scale) = s.scale {
             seq = seq.scale(scale);
         }
+        if let Some(swr) = s.scales_with_rotate {
+            seq = seq.with_scales_with_rotate(swr.target_index, swr.scale);
+        }
+        if let Some(bwr) = s.brightness_with_rotate {
+            seq = seq.with_brightness_with_rotate(bwr.target_index, bwr.start_brightness, bwr.end_brightness);
+        }
         println!("[INFO] '{}' on display {}: {} frames", s.path, s.display, seq.frame_count());
         (seq, s.display)
     }).collect();
@@ -54,7 +60,7 @@ fn main() {
 
     while viewer.is_open() {
         let angle = receiver.angle();
-        viewer.render(angle);
+        let _frame_indices = viewer.render(angle);
         if let Some(ref l) = light {
             l.update(angle);
         }

@@ -1,0 +1,13 @@
+[package]
+name = "rotation_viewer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+minifb = "0.27"
+image = "0.25"
+rumqttc = "0.24"
+
+[[bin]]
+name = "rotation_viewer"
+path = "src/main.rs"

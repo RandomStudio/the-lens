@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
 
-const CACHE_RADIUS: usize = 50;
+const CACHE_RADIUS: usize = 200;
 const DEFAULT_HUE_OPACITY: f64 = 0.35;
 
 pub fn display_bounds(index: usize) -> (isize, isize, usize, usize) {

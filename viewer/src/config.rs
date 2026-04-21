@@ -30,8 +30,6 @@ pub struct BrightnessWithRotateConfig {
 pub struct SequenceConfig {
     pub path: String,
     pub display: usize,
-    pub hue_shift: Option<i32>,
-    pub hue_opacity: Option<f64>,
     pub scale: Option<f64>,
     pub scales_with_rotate: Option<ScalesWithRotateConfig>,
     pub brightness_with_rotate: Option<BrightnessWithRotateConfig>,

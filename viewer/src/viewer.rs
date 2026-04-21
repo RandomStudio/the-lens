@@ -7,7 +7,6 @@ const DEBUG_WIN_W: usize = 900;
 const DEBUG_WIN_H: usize = 450;
 
 const CACHE_RADIUS: usize = 50;
-const DEFAULT_HUE_OPACITY: f64 = 0.35;
 
 pub fn display_bounds(index: usize) -> (isize, isize, usize, usize) {
     #[cfg(target_os = "macos")]
@@ -41,8 +40,6 @@ pub struct ImageSequence {
     result_tx: mpsc::Sender<(usize, Vec<u32>)>,
     result_rx: mpsc::Receiver<(usize, Vec<u32>)>,
     index_transform: fn(isize, isize) -> isize,
-    hue_shift: Option<i32>,
-    pub hue_opacity: f64,
     scale: Option<f64>,
     scales_with_rotate: Option<(usize, f64)>,
     brightness_with_rotate: Option<(usize, f64, f64)>,
@@ -83,8 +80,6 @@ impl ImageSequence {
             cache: HashMap::new(), in_flight: HashSet::new(),
             result_tx: tx, result_rx: rx,
             index_transform,
-            hue_shift: None,
-            hue_opacity: DEFAULT_HUE_OPACITY,
             scale: None,
             scales_with_rotate: None,
             brightness_with_rotate: None,
@@ -106,22 +101,10 @@ impl ImageSequence {
             cache: HashMap::new(), in_flight: HashSet::new(),
             result_tx: tx, result_rx: rx,
             index_transform: |idx, _n| idx,
-            hue_shift: None,
-            hue_opacity: DEFAULT_HUE_OPACITY,
             scale: None,
             scales_with_rotate: None,
             brightness_with_rotate: None,
         }
-    }
-
-    pub fn hue_shift(mut self, start_hue: i32) -> Self {
-        self.hue_shift = Some(start_hue);
-        self
-    }
-
-    pub fn hue_opacity(mut self, opacity: f64) -> Self {
-        self.hue_opacity = opacity;
-        self
     }
 
     pub fn scale(mut self, factor: f64) -> Self {
@@ -168,13 +151,6 @@ impl ImageSequence {
         // then logarithmic-like acceleration in the final approach to the target
         let t_eased = t.powf(5.0);
         Some(start_brightness + (end_brightness - start_brightness) * t_eased)
-    }
-
-    pub fn hue_color_at_angle(&self, angle: f64) -> Option<(u8, u8, u8)> {
-        self.hue_shift.map(|start| {
-            let hue = (angle + start as f64).rem_euclid(360.0);
-            hue_to_rgb(hue)
-        })
     }
 
     pub fn set_index_transform(&mut self, f: fn(isize, isize) -> isize) {
@@ -289,22 +265,6 @@ fn decode_frame(path: &Path, width: usize, height: usize) -> Vec<u32> {
     canvas
 }
 
-fn hue_to_rgb(hue: f64) -> (u8, u8, u8) {
-    let h = hue / 60.0;
-    let i = h.floor() as u32 % 6;
-    let f = h - h.floor();
-    let q = 1.0 - f;
-    let (r, g, b): (f64, f64, f64) = match i {
-        0 => (1.0, f,   0.0),
-        1 => (q,   1.0, 0.0),
-        2 => (0.0, 1.0, f  ),
-        3 => (0.0, q,   1.0),
-        4 => (f,   0.0, 1.0),
-        _ => (1.0, 0.0, q  ),
-    };
-    ((r * 255.0).round() as u8, (g * 255.0).round() as u8, (b * 255.0).round() as u8)
-}
-
 fn scale_from_center(src: &[u32], w: usize, h: usize, scale: f64) -> Vec<u32> {
     let cx = w as f64 / 2.0;
     let cy = h as f64 / 2.0;
@@ -325,14 +285,6 @@ fn apply_brightness(pixel: u32, brightness: f64) -> u32 {
     let r = (((pixel >> 16) & 0xff) as f64 * brightness).min(255.0) as u32;
     let g = (((pixel >>  8) & 0xff) as f64 * brightness).min(255.0) as u32;
     let b = (( pixel        & 0xff) as f64 * brightness).min(255.0) as u32;
-    (r << 16) | (g << 8) | b
-}
-
-fn blend_hue(pixel: u32, (hr, hg, hb): (u8, u8, u8), alpha: f64) -> u32 {
-    let ia = 1.0 - alpha;
-    let r = (((pixel >> 16) & 0xff) as f64 * ia + hr as f64 * alpha) as u32;
-    let g = (((pixel >>  8) & 0xff) as f64 * ia + hg as f64 * alpha) as u32;
-    let b = (( pixel        & 0xff) as f64 * ia + hb as f64 * alpha) as u32;
     (r << 16) | (g << 8) | b
 }
 
@@ -400,12 +352,14 @@ impl Viewer {
             let (x, y, w, h) = display_bounds(display);
             seq.set_dimensions(w, h);
 
-            let mut win = Window::new(&format!("Window {}", i), w, h, WindowOptions { resize: true, ..WindowOptions::default() })
-                .unwrap_or_else(|_| panic!("failed to create window {}", i));
-            win.set_position(x, y);
-            win.set_target_fps(60);
+            if !is_debug_display {
+                let mut win = Window::new(&format!("Window {}", i), w, h, WindowOptions { resize: true, ..WindowOptions::default() })
+                    .unwrap_or_else(|_| panic!("failed to create window {}", i));
+                win.set_position(x, y);
+                win.set_target_fps(60);
+                windows.push(win);
+            }
 
-            windows.push(win);
             sequences.push(seq);
             dims.push((w, h));
         }
@@ -437,8 +391,17 @@ impl Viewer {
         Self { windows, sequences, dims, debug_window, debug_font }
     }
 
+    pub fn brightness_at_angle(&self, angle: f64) -> Option<f64> {
+        self.sequences.first()?.dynamic_brightness_at_angle(angle)
+    }
+
     pub fn is_open(&self) -> bool {
-        self.windows.iter().all(|w| w.is_open() && !w.is_key_down(Key::Escape) && !w.is_key_down(Key::Q))
+        if self.windows.is_empty() {
+            self.debug_window.as_ref()
+                .map_or(false, |w| w.is_open() && !w.is_key_down(Key::Escape) && !w.is_key_down(Key::Q))
+        } else {
+            self.windows.iter().all(|w| w.is_open() && !w.is_key_down(Key::Escape) && !w.is_key_down(Key::Q))
+        }
     }
 
     pub fn render(&mut self, angle: f64) -> Vec<usize> {
@@ -447,21 +410,13 @@ impl Viewer {
             .zip(self.sequences.iter_mut())
             .zip(self.dims.iter())
         {
-            let hue_color = seq.hue_color_at_angle(angle);
-            let hue_opacity = seq.hue_opacity;
             let scale = seq.dynamic_scale_at_angle(angle).or_else(|| seq.scale_factor());
             let brightness = seq.dynamic_brightness_at_angle(angle);
             indices.push(seq.frame_index_at_angle(angle));
             let frame = seq.frame_at_angle(angle);
-            let blended: Vec<u32>;
             let scaled: Vec<u32>;
             let brightened: Vec<u32>;
-            let buf: &[u32] = if let Some(color) = hue_color {
-                blended = frame.iter().map(|&px| blend_hue(px, color, hue_opacity)).collect();
-                &blended
-            } else {
-                frame
-            };
+            let buf: &[u32] = frame;
             let buf: &[u32] = if let Some(s) = scale {
                 scaled = scale_from_center(buf, w, h, s);
                 &scaled

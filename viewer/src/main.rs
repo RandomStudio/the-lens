@@ -31,12 +31,6 @@ fn main() {
     let sequences: Vec<(ImageSequence, usize)> = cfg.sequences.into_iter().map(|s| {
         let transform = resolve_index_transform(s.index_transform.as_deref());
         let mut seq = ImageSequence::load(&s.path, transform);
-        if let Some(hue) = s.hue_shift {
-            seq = seq.hue_shift(hue);
-        }
-        if let Some(opacity) = s.hue_opacity {
-            seq = seq.hue_opacity(opacity);
-        }
         if let Some(scale) = s.scale {
             seq = seq.scale(scale);
         }
@@ -63,7 +57,7 @@ fn main() {
         let _frame_indices = viewer.render(angle);
         print!("\rAngle: {:6.2}°, indices: {:?}", angle, _frame_indices);
         if let Some(ref l) = light {
-            l.update(angle);
+            l.update(viewer.brightness_at_angle(angle).unwrap_or(0.0));
         }
         if let Some(ref s) = mqtt_sender {
             s.update(angle);

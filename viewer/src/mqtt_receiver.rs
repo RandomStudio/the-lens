@@ -61,9 +61,12 @@ impl AngleReceiver for MqttReceiver {
         self.last_time.set(now);
 
         let target = f64::from_bits(self.target.load(Ordering::Relaxed));
-        let current = self.current.get();
 
-        // Shortest-arc delta to avoid spinning the long way around 0°/360°.
+        if self.lerp_speed == 0.0 {
+            return target;
+        }
+
+        let current = self.current.get();
         let delta = ((target - current + 180.0).rem_euclid(360.0)) - 180.0;
         let alpha = 1.0 - (-self.lerp_speed * dt).exp();
         let smoothed = (current + delta * alpha).rem_euclid(360.0);

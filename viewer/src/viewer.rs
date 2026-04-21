@@ -435,20 +435,21 @@ impl Viewer {
 
         if self.debug_window.is_some() {
             let (fw, fh) = self.dims.first().copied().unwrap_or((0, 0));
-            let (frame, brightness) = if let Some(seq) = self.sequences.first_mut() {
+            let (frame, brightness, index) = if let Some(seq) = self.sequences.first_mut() {
+                let index = seq.frame_index_at_angle(angle);
                 let frame = seq.frame_at_angle(angle).to_vec();
                 let b = seq.dynamic_brightness_at_angle(angle);
-                (frame, b)
+                (frame, b, index)
             } else {
-                (vec![], None)
+                (vec![], None, 0)
             };
-            self.render_debug(angle, brightness, &frame, fw, fh);
+            self.render_debug(angle, brightness, index, &frame, fw, fh);
         }
 
         indices
     }
 
-    fn render_debug(&mut self, angle: f64, brightness: Option<f64>,
+    fn render_debug(&mut self, angle: f64, brightness: Option<f64>, index: usize,
                     frame: &[u32], fw: usize, fh: usize) {
         let mut buf = vec![0x111111u32; DEBUG_WIN_W * DEBUG_WIN_H];
 
@@ -471,6 +472,7 @@ impl Viewer {
         let line_height = 44usize;
         let lines = [
             format!("angle:      {:.1}", angle),
+            format!("index:      {}", index),
             brightness.map_or_else(
                 || "brightness: N/A".to_string(),
                 |b| format!("brightness: {:.2}", b),

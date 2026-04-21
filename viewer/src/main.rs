@@ -13,8 +13,10 @@ use mqtt_sender::MqttSender;
 use receiver::AngleReceiver;
 use rotator::Rotator;
 use viewer::{ImageSequence, Viewer};
+use winit::event_loop::EventLoop;
 
 fn main() {
+    let event_loop = EventLoop::new().unwrap();
     let cfg = Config::load("./config.json");
 
     let receiver: Box<dyn AngleReceiver> = match cfg.receiver.as_str() {
@@ -50,20 +52,6 @@ fn main() {
         None
     };
 
-    let mut viewer = Viewer::new(sequences);
-
-    while viewer.is_open() {
-        let angle = receiver.angle();
-        viewer.render(angle);
-        if let Some(ref l) = light {
-            l.update(angle);
-        }
-        if let Some(ref s) = mqtt_sender {
-            s.update(angle);
-        }
-    }
-
-    if let Some(ref l) = light {
-        l.turn_off();
-    }
+    let viewer = Viewer::new(&event_loop, sequences);
+    viewer.run(event_loop, receiver, light, mqtt_sender);
 }

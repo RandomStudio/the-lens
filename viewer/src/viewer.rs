@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
 
 const CACHE_RADIUS: usize = 50;
+const HUE_OVERLAY_ALPHA: f64 = 0.35;
 
 pub fn display_bounds(index: usize) -> (isize, isize, usize, usize) {
     #[cfg(target_os = "macos")]
@@ -56,6 +57,7 @@ pub struct ImageSequence {
     result_tx: mpsc::Sender<(usize, Vec<u32>)>,
     result_rx: mpsc::Receiver<(usize, Vec<u32>)>,
     index_transform: fn(isize, isize) -> isize,
+    hue_shift: Option<i32>,
 }
 
 impl ImageSequence {
@@ -93,6 +95,7 @@ impl ImageSequence {
             cache: HashMap::new(), in_flight: HashSet::new(),
             result_tx: tx, result_rx: rx,
             index_transform,
+            hue_shift: None,
         }
     }
 
@@ -111,7 +114,20 @@ impl ImageSequence {
             cache: HashMap::new(), in_flight: HashSet::new(),
             result_tx: tx, result_rx: rx,
             index_transform: |idx, _n| idx,
+            hue_shift: None,
         }
+    }
+
+    pub fn hue_shift(mut self, start_hue: i32) -> Self {
+        self.hue_shift = Some(start_hue);
+        self
+    }
+
+    pub fn hue_color_at_angle(&self, angle: f64) -> Option<(u8, u8, u8)> {
+        self.hue_shift.map(|start| {
+            let hue = (angle + start as f64).rem_euclid(360.0);
+            hue_to_rgb(hue)
+        })
     }
 
     pub fn set_index_transform(&mut self, f: fn(isize, isize) -> isize) {
@@ -210,6 +226,30 @@ fn decode_frame(path: &Path, width: usize, height: usize) -> Vec<u32> {
     canvas
 }
 
+fn hue_to_rgb(hue: f64) -> (u8, u8, u8) {
+    let h = hue / 60.0;
+    let i = h.floor() as u32 % 6;
+    let f = h - h.floor();
+    let q = 1.0 - f;
+    let (r, g, b): (f64, f64, f64) = match i {
+        0 => (1.0, f,   0.0),
+        1 => (q,   1.0, 0.0),
+        2 => (0.0, 1.0, f  ),
+        3 => (0.0, q,   1.0),
+        4 => (f,   0.0, 1.0),
+        _ => (1.0, 0.0, q  ),
+    };
+    ((r * 255.0).round() as u8, (g * 255.0).round() as u8, (b * 255.0).round() as u8)
+}
+
+fn blend_hue(pixel: u32, (hr, hg, hb): (u8, u8, u8), alpha: f64) -> u32 {
+    let ia = 1.0 - alpha;
+    let r = (((pixel >> 16) & 0xff) as f64 * ia + hr as f64 * alpha) as u32;
+    let g = (((pixel >>  8) & 0xff) as f64 * ia + hg as f64 * alpha) as u32;
+    let b = (( pixel        & 0xff) as f64 * ia + hb as f64 * alpha) as u32;
+    (r << 16) | (g << 8) | b
+}
+
 pub struct Viewer {
     window1: Window,
     window2: Window,
@@ -261,9 +301,17 @@ impl Viewer {
     }
 
     pub fn render(&mut self, angle: f64) {
+        let hue_color = self.seq1.hue_color_at_angle(angle);
         let frame1 = self.seq1.frame_at_angle(angle);
+        let blended: Vec<u32>;
+        let buf1: &[u32] = if let Some(color) = hue_color {
+            blended = frame1.iter().map(|&px| blend_hue(px, color, HUE_OVERLAY_ALPHA)).collect();
+            &blended
+        } else {
+            frame1
+        };
         self.window1
-            .update_with_buffer(frame1, self.w1.0, self.w1.1)
+            .update_with_buffer(buf1, self.w1.0, self.w1.1)
             .expect("window 1 update failed");
 
         let frame2 = self.seq2.frame_at_angle(angle);

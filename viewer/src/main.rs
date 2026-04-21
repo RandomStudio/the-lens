@@ -8,9 +8,6 @@ use mqtt_rotator::MqttRotator;
 use rotator::Rotator;
 use viewer::{ImageSequence, Viewer};
 
-const IMAGE_SEQUENCE_FOLDER_1: &str = "./sequences/lens";
-const IMAGE_SEQUENCE_FOLDER_2: &str = "./sequences/remote";
-
 const LENS_DISPLAY: usize = 1;
 const REMOTE_DISPLAY: usize = 0;
 
@@ -24,7 +21,8 @@ fn main() {
     let username = get_arg("--username");
     let password = get_arg("--password");
 
-    let seq1 = ImageSequence::load(IMAGE_SEQUENCE_FOLDER_1, |index, total| total - index - (total / 4));
+    let seq1 = ImageSequence::load("./sequences/lens", |index, total| total - index - (total / 4))
+        .hue_shift(0);
     let seq2 = ImageSequence::empty(); //ImageSequence::load(IMAGE_SEQUENCE_FOLDER_2);
     println!(
         "[INFO] Sequence 1: {} frames, Sequence 2: {} frames",

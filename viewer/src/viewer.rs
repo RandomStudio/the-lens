@@ -29,7 +29,7 @@ pub fn display_bounds(index: usize) -> (isize, isize, usize, usize) {
 
 #[cfg(target_os = "macos")]
 fn make_fullscreen(window: &Window) {
-    use objc::{msg_send, sel, sel_impl, runtime::Object};
+    use objc::{msg_send, sel, sel_impl, runtime::{Object, YES}};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
     let Ok(handle) = window.window_handle() else { return };
@@ -38,9 +38,19 @@ fn make_fullscreen(window: &Window) {
     unsafe {
         let ns_view: *mut Object = h.ns_view.as_ptr() as *mut Object;
         let ns_window: *mut Object = msg_send![ns_view, window];
+
+        // Extend content view to cover the full window including title bar area,
+        // then hide the title bar so it doesn't leave a white strip in fullscreen.
+        // NSWindowStyleMaskFullSizeContentView = 1 << 15
+        let style: usize = msg_send![ns_window, styleMask];
+        let () = msg_send![ns_window, setStyleMask: style | (1usize << 15)];
+        let () = msg_send![ns_window, setTitlebarAppearsTransparent: YES];
+        let () = msg_send![ns_window, setTitleVisibility: 1isize]; // NSWindowTitleHidden
+
+        // Enable and trigger fullscreen.
         // NSWindowCollectionBehaviorFullScreenPrimary = 1 << 7
-        let behavior: u64 = msg_send![ns_window, collectionBehavior];
-        let () = msg_send![ns_window, setCollectionBehavior: behavior | (1u64 << 7)];
+        let behavior: usize = msg_send![ns_window, collectionBehavior];
+        let () = msg_send![ns_window, setCollectionBehavior: behavior | (1usize << 7)];
         let () = msg_send![ns_window, toggleFullScreen: std::ptr::null::<Object>()];
     }
 }
@@ -54,6 +64,7 @@ pub struct ImageSequence {
     in_flight: HashSet<usize>,
     result_tx: mpsc::Sender<(usize, Vec<u32>)>,
     result_rx: mpsc::Receiver<(usize, Vec<u32>)>,
+    index_transform: fn(usize, usize) -> usize,
 }
 
 impl ImageSequence {
@@ -90,6 +101,7 @@ impl ImageSequence {
             width: 0, height: 0, blank: vec![],
             cache: HashMap::new(), in_flight: HashSet::new(),
             result_tx: tx, result_rx: rx,
+            index_transform: |idx, _n| idx,
         }
     }
 
@@ -107,7 +119,12 @@ impl ImageSequence {
             width: 0, height: 0, blank: vec![],
             cache: HashMap::new(), in_flight: HashSet::new(),
             result_tx: tx, result_rx: rx,
+            index_transform: |idx, _n| idx,
         }
+    }
+
+    pub fn set_index_transform(&mut self, f: fn(usize, usize) -> usize) {
+        self.index_transform = f;
     }
 
     pub fn set_dimensions(&mut self, width: usize, height: usize) {
@@ -127,7 +144,7 @@ impl ImageSequence {
 
         let n = self.paths.len();
         let idx = ((angle.rem_euclid(360.0) / 360.0) * n as f64) as usize;
-        let idx = idx.min(n - 1);
+        let idx = (self.index_transform)(idx.min(n - 1), n);
 
         while let Ok((i, frame)) = self.result_rx.try_recv() {
             self.in_flight.remove(&i);

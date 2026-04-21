@@ -25,7 +25,7 @@ fn main() {
 
     let rotator = Rotator::new();
     let light = Light::new();
-    //let mqtt = MqttRotator::new(&rotator).start();
+    let mqtt = MqttRotator::new(&rotator).start();
 
     let mut viewer = Viewer::new(seq1, LENS_DISPLAY, seq2, REMOTE_DISPLAY);
 
@@ -33,6 +33,6 @@ fn main() {
         let angle = rotator.angle();
         viewer.render(angle);
         light.update(angle);
-        //mqtt.update(angle);
+        mqtt.update(angle);
     }
 }

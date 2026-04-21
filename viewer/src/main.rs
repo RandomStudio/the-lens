@@ -24,7 +24,7 @@ fn main() {
     let username = get_arg("--username");
     let password = get_arg("--password");
 
-    let seq1 = ImageSequence::load(IMAGE_SEQUENCE_FOLDER_1, |index, total| total - index);
+    let seq1 = ImageSequence::load(IMAGE_SEQUENCE_FOLDER_1, |index, total| total - index - (total / 4));
     let seq2 = ImageSequence::empty(); //ImageSequence::load(IMAGE_SEQUENCE_FOLDER_2);
     println!(
         "[INFO] Sequence 1: {} frames, Sequence 2: {} frames",

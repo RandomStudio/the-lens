@@ -30,6 +30,7 @@ pub fn display_bounds(index: usize) -> (isize, isize, usize, usize) {
 
 #[cfg(target_os = "macos")]
 fn make_fullscreen(window: &Window) {
+    use core_graphics::geometry::CGRect;
     use objc::{class, msg_send, sel, sel_impl, runtime::Object};
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
@@ -40,16 +41,18 @@ fn make_fullscreen(window: &Window) {
         let ns_view: *mut Object = h.ns_view.as_ptr() as *mut Object;
         let ns_window: *mut Object = msg_send![ns_view, window];
 
-        // Strip all window chrome (NSWindowStyleMaskBorderless = 0)
-        let () = msg_send![ns_window, setStyleMask: 0usize];
-
-        // Place window above menu bar and all system UI (NSScreenSaverWindowLevel = 1000)
-        let () = msg_send![ns_window, setLevel: 1000i64];
-
-        // Hide dock and menu bar completely (must be combined per Apple docs)
+        // Hide dock and menu bar first so the screen frame is stable
         // NSApplicationPresentationHideDock = 1 << 1, NSApplicationPresentationHideMenuBar = 1 << 3
         let app: *mut Object = msg_send![class!(NSApplication), sharedApplication];
         let () = msg_send![app, setPresentationOptions: 10usize];
+
+        // Expand to the screen's full frame (not visibleFrame — that excludes menu bar/dock)
+        let screen: *mut Object = msg_send![ns_window, screen];
+        let frame: CGRect = msg_send![screen, frame];
+        let () = msg_send![ns_window, setFrame: frame display: 1i8];
+
+        // Place above all system UI (NSScreenSaverWindowLevel = 1000)
+        let () = msg_send![ns_window, setLevel: 1000i64];
     }
 }
 

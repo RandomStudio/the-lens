@@ -1,11 +1,13 @@
+mod light;
 mod rotator;
 mod viewer;
 
+use light::Light;
 use rotator::Rotator;
 use viewer::{ImageSequence, Viewer};
 
-const IMAGE_SEQUENCE_FOLDER_1: &str = "./sequence1";
-const IMAGE_SEQUENCE_FOLDER_2: &str = "./sequence2";
+const IMAGE_SEQUENCE_FOLDER_1: &str = "./sequences/lens";
+const IMAGE_SEQUENCE_FOLDER_2: &str = "./sequences/remote";
 
 const WINDOW_1_W: usize = 1920;
 const WINDOW_1_H: usize = 1080;
@@ -22,6 +24,7 @@ fn main() {
     let seq2 = ImageSequence::load(IMAGE_SEQUENCE_FOLDER_2, WINDOW_2_W, WINDOW_2_H);
 
     let rotator = Rotator::start();
+    let light = Light::new();
 
     let mut viewer = Viewer::new(
         seq1, (WINDOW_1_W, WINDOW_1_H), (WINDOW_1_X, WINDOW_1_Y),
@@ -29,6 +32,8 @@ fn main() {
     );
 
     while viewer.is_open() {
-        viewer.render(rotator.angle());
+        let angle = rotator.angle();
+        viewer.render(angle);
+        light.update(angle);
     }
 }

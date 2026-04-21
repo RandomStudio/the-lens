@@ -251,72 +251,58 @@ fn blend_hue(pixel: u32, (hr, hg, hb): (u8, u8, u8), alpha: f64) -> u32 {
 }
 
 pub struct Viewer {
-    window1: Window,
-    window2: Window,
-    seq1: ImageSequence,
-    seq2: ImageSequence,
-    w1: (usize, usize),
-    w2: (usize, usize),
+    windows: Vec<Window>,
+    sequences: Vec<ImageSequence>,
+    dims: Vec<(usize, usize)>,
 }
 
 impl Viewer {
-    pub fn new(
-        mut seq1: ImageSequence,
-        display1: usize,
-        mut seq2: ImageSequence,
-        display2: usize,
-    ) -> Self {
-        let (x1, y1, w1, h1) = display_bounds(display1);
-        let (x2, y2, w2, h2) = display_bounds(display2);
-
-        seq1.set_dimensions(w1, h1);
-        seq2.set_dimensions(w2, h2);
-
+    pub fn new(mut entries: Vec<(ImageSequence, usize)>) -> Self {
         let opts = WindowOptions { borderless: true, ..WindowOptions::default() };
+        let mut windows = Vec::with_capacity(entries.len());
+        let mut sequences = Vec::with_capacity(entries.len());
+        let mut dims = Vec::with_capacity(entries.len());
 
-        let mut window1 = Window::new("Lens", w1, h1, opts)
-            .expect("failed to create window 1");
-        window1.set_position(x1, y1);
-        window1.set_target_fps(60);
+        for (i, (mut seq, display)) in entries.drain(..).enumerate() {
+            let (x, y, w, h) = display_bounds(display);
+            seq.set_dimensions(w, h);
 
-        let mut window2 = Window::new("Remote", w2, h2, opts)
-            .expect("failed to create window 2");
-        window2.set_position(x2, y2);
-        window2.set_target_fps(60);
+            let mut win = Window::new(&format!("Window {}", i), w, h, opts)
+                .unwrap_or_else(|_| panic!("failed to create window {}", i));
+            win.set_position(x, y);
+            win.set_target_fps(60);
 
-        #[cfg(target_os = "macos")]
-        {
-            make_fullscreen(&window1);
-            make_fullscreen(&window2);
+            #[cfg(target_os = "macos")]
+            make_fullscreen(&win);
+
+            windows.push(win);
+            sequences.push(seq);
+            dims.push((w, h));
         }
 
-        Self { window1, window2, seq1, seq2, w1: (w1, h1), w2: (w2, h2) }
+        Self { windows, sequences, dims }
     }
 
     pub fn is_open(&self) -> bool {
-        self.window1.is_open()
-            && self.window2.is_open()
-            && !self.window1.is_key_down(Key::Escape)
-            && !self.window2.is_key_down(Key::Escape)
+        self.windows.iter().all(|w| w.is_open() && !w.is_key_down(Key::Escape))
     }
 
     pub fn render(&mut self, angle: f64) {
-        let hue_color = self.seq1.hue_color_at_angle(angle);
-        let frame1 = self.seq1.frame_at_angle(angle);
-        let blended: Vec<u32>;
-        let buf1: &[u32] = if let Some(color) = hue_color {
-            blended = frame1.iter().map(|&px| blend_hue(px, color, HUE_OVERLAY_ALPHA)).collect();
-            &blended
-        } else {
-            frame1
-        };
-        self.window1
-            .update_with_buffer(buf1, self.w1.0, self.w1.1)
-            .expect("window 1 update failed");
-
-        let frame2 = self.seq2.frame_at_angle(angle);
-        self.window2
-            .update_with_buffer(frame2, self.w2.0, self.w2.1)
-            .expect("window 2 update failed");
+        for ((win, seq), &(w, h)) in self.windows.iter_mut()
+            .zip(self.sequences.iter_mut())
+            .zip(self.dims.iter())
+        {
+            let hue_color = seq.hue_color_at_angle(angle);
+            let frame = seq.frame_at_angle(angle);
+            let blended: Vec<u32>;
+            let buf: &[u32] = if let Some(color) = hue_color {
+                blended = frame.iter().map(|&px| blend_hue(px, color, HUE_OVERLAY_ALPHA)).collect();
+                &blended
+            } else {
+                frame
+            };
+            win.update_with_buffer(buf, w, h)
+                .unwrap_or_else(|e| eprintln!("[Viewer] update failed: {}", e));
+        }
     }
 }

@@ -1363,6 +1363,8 @@ dependencies = [
  "raw-window-handle",
  "rayon",
  "rumqttc",
+ "serde",
+ "serde_json",
  "serialport",
 ]
 

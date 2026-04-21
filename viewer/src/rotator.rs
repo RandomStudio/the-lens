@@ -1,3 +1,4 @@
+use crate::receiver::AngleReceiver;
 use std::io::BufRead;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -62,7 +63,10 @@ impl Rotator {
         Self { angle }
     }
 
-    pub fn angle(&self) -> f64 {
+}
+
+impl AngleReceiver for Rotator {
+    fn angle(&self) -> f64 {
         f64::from_bits(self.angle.load(Ordering::Relaxed))
     }
 }

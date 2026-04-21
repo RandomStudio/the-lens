@@ -1,45 +1,52 @@
+mod config;
 mod light;
-mod mqtt_rotator;
+mod mqtt_receiver;
+mod mqtt_sender;
+mod receiver;
 mod rotator;
 mod viewer;
 
+use config::{Config, resolve_index_transform};
 use light::Light;
-use mqtt_rotator::MqttRotator;
+use mqtt_receiver::MqttReceiver;
+use mqtt_sender::MqttSender;
+use receiver::AngleReceiver;
 use rotator::Rotator;
 use viewer::{ImageSequence, Viewer};
 
-const LENS_DISPLAY: usize = 1;
-const REMOTE_DISPLAY: usize = 0;
-
 fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    let get_arg = |flag: &str| -> Option<String> {
-        args.windows(2)
-            .find(|w| w[0] == flag)
-            .map(|w| w[1].clone())
+    let cfg = Config::load("./config.json");
+
+    let receiver: Box<dyn AngleReceiver> = match cfg.receiver.as_str() {
+        "mqtt" => Box::new(MqttReceiver::new(cfg.mqtt.clone())),
+        _ => Box::new(Rotator::new()),
     };
-    let username = get_arg("--username");
-    let password = get_arg("--password");
 
-    let seq1 = ImageSequence::load("./sequences/lens", |index, total| total - index - (total / 4))
-        .hue_shift(0);
-    let seq2 = ImageSequence::empty(); //ImageSequence::load(IMAGE_SEQUENCE_FOLDER_2);
-    println!(
-        "[INFO] Sequence 1: {} frames, Sequence 2: {} frames",
-        seq1.frame_count(),
-        seq2.frame_count()
-    );
+    let mqtt_sender = if cfg.mqtt_send {
+        Some(MqttSender::new(cfg.mqtt))
+    } else {
+        None
+    };
 
-    let rotator = Rotator::new();
+    let sequences: Vec<(ImageSequence, usize)> = cfg.sequences.into_iter().map(|s| {
+        let transform = resolve_index_transform(s.index_transform.as_deref());
+        let mut seq = ImageSequence::load(&s.path, transform);
+        if let Some(hue) = s.hue_shift {
+            seq = seq.hue_shift(hue);
+        }
+        println!("[INFO] '{}' on display {}: {} frames", s.path, s.display, seq.frame_count());
+        (seq, s.display)
+    }).collect();
+
     let light = Light::new();
-    let mqtt = MqttRotator::new(username, password);
-
-    let mut viewer = Viewer::new(seq1, LENS_DISPLAY, seq2, REMOTE_DISPLAY);
+    let mut viewer = Viewer::new(sequences);
 
     while viewer.is_open() {
-        let angle = rotator.angle();
+        let angle = receiver.angle();
         viewer.render(angle);
         light.update(angle);
-        mqtt.update(angle);
+        if let Some(ref s) = mqtt_sender {
+            s.update(angle);
+        }
     }
 }

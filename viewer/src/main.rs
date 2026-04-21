@@ -16,7 +16,7 @@ const REMOTE_DISPLAY: usize = 0;
 
 fn main() {
     let seq1 = ImageSequence::load(IMAGE_SEQUENCE_FOLDER_1);
-    let seq2 = ImageSequence::load(IMAGE_SEQUENCE_FOLDER_2);
+    let seq2 = ImageSequence::empty(); //ImageSequence::load(IMAGE_SEQUENCE_FOLDER_2);
     println!(
         "[INFO] Sequence 1: {} frames, Sequence 2: {} frames",
         seq1.frame_count(),

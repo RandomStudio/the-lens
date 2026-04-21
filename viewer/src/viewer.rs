@@ -5,8 +5,6 @@ use std::sync::{mpsc, Arc};
 
 const CACHE_RADIUS: usize = 50;
 
-// Returns (x, y, width, height) for the display at the given index,
-// sorted left-to-right by screen position.
 pub fn display_bounds(index: usize) -> (isize, isize, usize, usize) {
     #[cfg(target_os = "macos")]
     {
@@ -21,15 +19,30 @@ pub fn display_bounds(index: usize) -> (isize, isize, usize, usize) {
             })
             .collect();
         displays.sort_by_key(|&(x, y, _, _)| (x, y));
-        assert!(
-            index < displays.len(),
-            "display {} requested but only {} available",
-            index, displays.len()
-        );
+        assert!(index < displays.len(),
+            "display {} requested but only {} available", index, displays.len());
         return displays[index];
     }
     #[cfg(not(target_os = "macos"))]
     panic!("display_bounds not implemented for this platform");
+}
+
+#[cfg(target_os = "macos")]
+fn make_fullscreen(window: &Window) {
+    use objc::{msg_send, sel, sel_impl, runtime::Object};
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let Ok(handle) = window.window_handle() else { return };
+    let RawWindowHandle::AppKit(h) = handle.as_raw() else { return };
+
+    unsafe {
+        let ns_view: *mut Object = h.ns_view.as_ptr() as *mut Object;
+        let ns_window: *mut Object = msg_send![ns_view, window];
+        // NSWindowCollectionBehaviorFullScreenPrimary = 1 << 7
+        let behavior: u64 = msg_send![ns_window, collectionBehavior];
+        let () = msg_send![ns_window, setCollectionBehavior: behavior | (1u64 << 7)];
+        let () = msg_send![ns_window, toggleFullScreen: std::ptr::null::<Object>()];
+    }
 }
 
 pub struct ImageSequence {
@@ -50,12 +63,7 @@ impl ImageSequence {
 
         if !path.exists() {
             eprintln!("[WARN] '{}' does not exist — will show blank frames.", folder);
-            return Self {
-                paths: Arc::new(vec![]),
-                width: 0, height: 0, blank: vec![],
-                cache: HashMap::new(), in_flight: HashSet::new(),
-                result_tx: tx, result_rx: rx,
-            };
+            return Self::blank_instance(tx, rx);
         }
 
         let mut entries: Vec<_> = std::fs::read_dir(path)
@@ -71,12 +79,7 @@ impl ImageSequence {
 
         if entries.is_empty() {
             eprintln!("[WARN] No images in '{}' — will show blank frames.", folder);
-            return Self {
-                paths: Arc::new(vec![]),
-                width: 0, height: 0, blank: vec![],
-                cache: HashMap::new(), in_flight: HashSet::new(),
-                result_tx: tx, result_rx: rx,
-            };
+            return Self::blank_instance(tx, rx);
         }
 
         let paths: Vec<PathBuf> = entries.iter().map(|e| e.path()).collect();
@@ -84,6 +87,23 @@ impl ImageSequence {
 
         Self {
             paths: Arc::new(paths),
+            width: 0, height: 0, blank: vec![],
+            cache: HashMap::new(), in_flight: HashSet::new(),
+            result_tx: tx, result_rx: rx,
+        }
+    }
+
+    pub fn empty() -> Self {
+        let (tx, rx) = mpsc::channel();
+        Self::blank_instance(tx, rx)
+    }
+
+    fn blank_instance(
+        tx: mpsc::Sender<(usize, Vec<u32>)>,
+        rx: mpsc::Receiver<(usize, Vec<u32>)>,
+    ) -> Self {
+        Self {
+            paths: Arc::new(vec![]),
             width: 0, height: 0, blank: vec![],
             cache: HashMap::new(), in_flight: HashSet::new(),
             result_tx: tx, result_rx: rx,
@@ -109,27 +129,18 @@ impl ImageSequence {
         let idx = ((angle.rem_euclid(360.0) / 360.0) * n as f64) as usize;
         let idx = idx.min(n - 1);
 
-        // Drain completed background loads into cache.
         while let Ok((i, frame)) = self.result_rx.try_recv() {
             self.in_flight.remove(&i);
             self.cache.insert(i, frame);
         }
 
-        // Compute the desired window (wraps around).
         let window: HashSet<usize> = window_indices(idx, n).collect();
-
-        // Evict frames that have left the window.
         self.cache.retain(|k, _| window.contains(k));
         self.in_flight.retain(|k| window.contains(k));
 
-        // Schedule background loads for uncached window frames,
-        // in order of proximity so nearer frames load first.
         for wi in window_indices(idx, n) {
-            if !self.cache.contains_key(&wi) && !self.in_flight.insert(wi) {
-                continue; // already in-flight
-            } else if self.cache.contains_key(&wi) {
-                continue;
-            }
+            if self.cache.contains_key(&wi) { continue; }
+            if !self.in_flight.insert(wi) { continue; }
             let paths = Arc::clone(&self.paths);
             let tx = self.result_tx.clone();
             let (w, h) = (self.width, self.height);
@@ -139,7 +150,6 @@ impl ImageSequence {
             });
         }
 
-        // Guarantee the current frame is ready (load synchronously on miss).
         if !self.cache.contains_key(&idx) {
             let frame = decode_frame(&self.paths[idx], self.width, self.height);
             self.in_flight.remove(&idx);
@@ -150,21 +160,14 @@ impl ImageSequence {
     }
 }
 
-// Yields indices in the window [center-CACHE_RADIUS, center+CACHE_RADIUS],
-// emitted outward from center so background tasks prioritise nearby frames.
 fn window_indices(center: usize, n: usize) -> impl Iterator<Item = usize> {
     let n_i = n as isize;
     let c = center as isize;
     let r = CACHE_RADIUS as isize;
     (0..=(2 * r)).map(move |step| {
-        // Interleave: 0, -1, +1, -2, +2 …
-        let offset = if step == 0 {
-            0
-        } else if step % 2 == 1 {
-            (step + 1) / 2
-        } else {
-            -(step / 2)
-        };
+        let offset = if step == 0 { 0 }
+            else if step % 2 == 1 { (step + 1) / 2 }
+            else { -(step / 2) };
         ((c + offset).rem_euclid(n_i)) as usize
     })
 }
@@ -220,22 +223,21 @@ impl Viewer {
         seq1.set_dimensions(w1, h1);
         seq2.set_dimensions(w2, h2);
 
-        let fs_opts = WindowOptions {
-            borderless: true,
-            topmost: true,
-            resize: false,
-            ..WindowOptions::default()
-        };
-
-        let mut window1 = Window::new("Display 1", w1, h1, fs_opts.clone())
+        let mut window1 = Window::new("Lens", w1, h1, WindowOptions::default())
             .expect("failed to create window 1");
         window1.set_position(x1, y1);
         window1.set_target_fps(60);
 
-        let mut window2 = Window::new("Display 2", w2, h2, fs_opts)
+        let mut window2 = Window::new("Remote", w2, h2, WindowOptions::default())
             .expect("failed to create window 2");
         window2.set_position(x2, y2);
         window2.set_target_fps(60);
+
+        #[cfg(target_os = "macos")]
+        {
+            make_fullscreen(&window1);
+            make_fullscreen(&window2);
+        }
 
         Self { window1, window2, seq1, seq2, w1: (w1, h1), w2: (w2, h2) }
     }

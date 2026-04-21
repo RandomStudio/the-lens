@@ -15,6 +15,15 @@ const LENS_DISPLAY: usize = 1;
 const REMOTE_DISPLAY: usize = 0;
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    let get_arg = |flag: &str| -> Option<String> {
+        args.windows(2)
+            .find(|w| w[0] == flag)
+            .map(|w| w[1].clone())
+    };
+    let username = get_arg("--username");
+    let password = get_arg("--password");
+
     let seq1 = ImageSequence::load(IMAGE_SEQUENCE_FOLDER_1);
     let seq2 = ImageSequence::empty(); //ImageSequence::load(IMAGE_SEQUENCE_FOLDER_2);
     println!(
@@ -25,7 +34,7 @@ fn main() {
 
     let rotator = Rotator::new();
     let light = Light::new();
-    let mqtt = MqttRotator::new(&rotator).start();
+    let mqtt = MqttRotator::new(&rotator, username, password).start();
 
     let mut viewer = Viewer::new(seq1, LENS_DISPLAY, seq2, REMOTE_DISPLAY);
 

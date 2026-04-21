@@ -11,20 +11,28 @@ const TOPIC: &str = "prototype/lens/angle";
 
 pub struct MqttRotator {
     angle: Arc<AtomicU64>,
+    username: Option<String>,
+    password: Option<String>,
 }
 
 impl MqttRotator {
-    pub fn new(rotator: &Rotator) -> Self {
+    pub fn new(rotator: &Rotator, username: Option<String>, password: Option<String>) -> Self {
         Self {
             angle: rotator.shared(),
+            username,
+            password,
         }
     }
 
     pub fn start(&self) {
         let shared = Arc::clone(&self.angle);
+        let username = self.username.clone();
+        let password = self.password.clone();
         thread::spawn(move || {
             let mut opts = MqttOptions::new("rotation-viewer", BROKER, PORT);
-            opts.set_credentials("tether", "sp_ceB0ss!");
+            if let (Some(u), Some(p)) = (username, password) {
+                opts.set_credentials(u, p);
+            }
             opts.set_keep_alive(std::time::Duration::from_secs(5));
             let (client, mut connection) = Client::new(opts, 32);
             client.subscribe(TOPIC, QoS::AtMostOnce).unwrap();

@@ -1,4 +1,5 @@
 use minifb::{Key, Window, WindowOptions};
+use rayon::prelude::*;
 use std::path::Path;
 
 const TOTAL_FRAMES: usize = 60;
@@ -9,20 +10,6 @@ pub struct ImageSequence {
 
 impl ImageSequence {
     pub fn load(folder: &str, width: usize, height: usize) -> Self {
-        let img_size = width;
-
-        let top_pad = if img_size < height {
-            (height - img_size) / 2
-        } else {
-            0
-        };
-
-        let src_start = if img_size > height {
-            (img_size - height) / 2
-        } else {
-            0
-        };
-
         let blank_frame = || vec![0u32; width * height];
 
         let path = Path::new(folder);
@@ -47,45 +34,35 @@ impl ImageSequence {
             return Self { frames: vec![blank_frame(); TOTAL_FRAMES] };
         }
 
-        println!(
-            "[INFO] Loading {} images from '{}' → {}×{} on {}×{} canvas",
-            entries.len(),
-            folder,
-            img_size,
-            img_size,
-            width,
-            height
-        );
+        println!("[INFO] Loading {} images from '{}'", entries.len(), folder);
 
         let frames = entries
-            .iter()
+            .par_iter()
             .map(|entry| {
                 let img = image::open(entry.path())
-                    .unwrap_or_else(|_| panic!("Failed to open {:?}", entry.path()));
-
-                let img = img
-                    .resize_exact(
-                        img_size as u32,
-                        img_size as u32,
-                        image::imageops::FilterType::Lanczos3,
-                    )
+                    .unwrap_or_else(|_| panic!("Failed to open {:?}", entry.path()))
                     .to_rgba8();
 
-                let mut canvas = vec![0u32; width * height];
+                let img_w = img.width() as usize;
+                let img_h = img.height() as usize;
 
-                for (src_y, row_pixels) in img.rows().enumerate() {
-                    if src_y < src_start {
-                        continue;
-                    }
-                    let dst_y = top_pad + (src_y - src_start);
-                    if dst_y >= height {
-                        break;
-                    }
-                    let row_start = dst_y * width;
-                    for (src_x, pixel) in row_pixels.enumerate() {
-                        let [r, g, b, _] = pixel.0;
-                        canvas[row_start + src_x] =
-                            ((r as u32) << 16) | ((g as u32) << 8) | (b as u32);
+                // Centre vertically; crop if taller than window
+                let src_y0 = if img_h > height { (img_h - height) / 2 } else { 0 };
+                let dst_y0 = if img_h < height { (height - img_h) / 2 } else { 0 };
+                let rows   = img_h.min(height);
+                let cols   = img_w.min(width);
+
+                let mut canvas = vec![0u32; width * height];
+                let raw = img.as_raw();
+                let stride = img_w * 4;
+
+                for out_row in 0..rows {
+                    let src = (src_y0 + out_row) * stride;
+                    let dst = (dst_y0 + out_row) * width;
+                    for col in 0..cols {
+                        let p = src + col * 4;
+                        canvas[dst + col] =
+                            ((raw[p] as u32) << 16) | ((raw[p + 1] as u32) << 8) | (raw[p + 2] as u32);
                     }
                 }
 
@@ -121,33 +98,20 @@ impl Viewer {
         w2_size: (usize, usize),
         w2_pos: (isize, isize),
     ) -> Self {
-        let mut window1 = Window::new(
-            "Display 1",
-            w1_size.0,
-            w1_size.1,
-            WindowOptions {
-                borderless: true,
-                resize: false,
-                ..WindowOptions::default()
-            },
-        )
-        .expect("Failed to create window 1");
+        let fs_opts = WindowOptions {
+            borderless: true,
+            topmost: true,
+            resize: false,
+            ..WindowOptions::default()
+        };
 
+        let mut window1 = Window::new("Display 1", w1_size.0, w1_size.1, fs_opts.clone())
+            .expect("Failed to create window 1");
         window1.set_position(w1_pos.0, w1_pos.1);
         window1.set_target_fps(60);
 
-        let mut window2 = Window::new(
-            "Display 2",
-            w2_size.0,
-            w2_size.1,
-            WindowOptions {
-                borderless: true,
-                resize: false,
-                ..WindowOptions::default()
-            },
-        )
-        .expect("Failed to create window 2");
-
+        let mut window2 = Window::new("Display 2", w2_size.0, w2_size.1, fs_opts)
+            .expect("Failed to create window 2");
         window2.set_position(w2_pos.0, w2_pos.1);
         window2.set_target_fps(60);
 

@@ -334,7 +334,7 @@ impl Viewer {
     }
 
     pub fn is_open(&self) -> bool {
-        self.windows.iter().all(|w| w.is_open() && !w.is_key_down(Key::Escape))
+        self.windows.iter().all(|w| w.is_open() && !w.is_key_down(Key::Escape) && !w.is_key_down(Key::Q))
     }
 
     pub fn render(&mut self, angle: f64) {

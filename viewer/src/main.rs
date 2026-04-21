@@ -56,10 +56,14 @@ fn main() {
         let angle = receiver.angle();
         viewer.render(angle);
         if let Some(ref l) = light {
-          l.update(angle);
+            l.update(angle);
         }
         if let Some(ref s) = mqtt_sender {
             s.update(angle);
         }
+    }
+
+    if let Some(ref l) = light {
+        l.turn_off();
     }
 }

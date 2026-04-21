@@ -16,6 +16,12 @@ impl Light {
         Self { socket }
     }
 
+    pub fn turn_off(&self) {
+        let dmx = [0u8; 512];
+        let packet = artnet_dmx_packet(0, &dmx);
+        let _ = self.socket.send_to(&packet, ARTNET_ADDR);
+    }
+
     pub fn update(&self, angle: f64) {
         let hue = angle.rem_euclid(360.0);
         let (r, g, b) = hue_to_rgb(hue);

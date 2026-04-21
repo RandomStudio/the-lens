@@ -25,6 +25,7 @@ pub struct Config {
     /// Angle source: "rotator" or "mqtt"
     pub receiver: String,
     pub mqtt_send: bool,
+    pub light_send: bool,
     pub sequences: Vec<SequenceConfig>,
 }
 

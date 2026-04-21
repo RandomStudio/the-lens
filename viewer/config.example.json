@@ -1,6 +1,7 @@
 {
   "receiver": "rotator",
   "mqtt_send": false,
+  "light_send": true,
   "mqtt": {
     "broker": "10.112.10.10",
     "port": 1883,
@@ -13,6 +14,7 @@
       "path": "./sequences/lens",
       "display": 1,
       "hue_shift": 0,
+      "scale": 1.0,
       "index_transform": "reverse_quarter"
     }
   ]

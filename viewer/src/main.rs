@@ -41,13 +41,20 @@ fn main() {
         (seq, s.display)
     }).collect();
 
-    let light = Light::new();
+    let light = if cfg.light_send {
+        Some(Light::new())
+    } else {
+        None
+    };
+
     let mut viewer = Viewer::new(sequences);
 
     while viewer.is_open() {
         let angle = receiver.angle();
         viewer.render(angle);
-        light.update(angle);
+        if let Some(ref l) = light {
+          l.update(angle);
+        }
         if let Some(ref s) = mqtt_sender {
             s.update(angle);
         }

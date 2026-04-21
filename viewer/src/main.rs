@@ -1,52 +1,34 @@
-use serialport::SerialPort;
-use std::io::{BufRead, BufReader};
-use std::time::Duration;
+mod rotator;
+mod viewer;
 
-fn find_teensy_port() -> Option<String> {
-    let ports = serialport::available_ports().ok()?;
-    for port in ports {
-        // On macOS, Teensy shows up as /dev/tty.usbmodem*
-        if port.port_name.contains("usbmodem") {
-            return Some(port.port_name);
-        }
+use rotator::Rotator;
+use viewer::{ImageSequence, Viewer};
+
+const IMAGE_SEQUENCE_FOLDER_1: &str = "./sequence1";
+const IMAGE_SEQUENCE_FOLDER_2: &str = "./sequence2";
+
+const WINDOW_1_W: usize = 1920;
+const WINDOW_1_H: usize = 1080;
+const WINDOW_1_X: isize = 0;
+const WINDOW_1_Y: isize = 0;
+
+const WINDOW_2_W: usize = 1920;
+const WINDOW_2_H: usize = 1080;
+const WINDOW_2_X: isize = 1920;
+const WINDOW_2_Y: isize = 0;
+
+fn main() {
+    let seq1 = ImageSequence::load(IMAGE_SEQUENCE_FOLDER_1, WINDOW_1_W, WINDOW_1_H);
+    let seq2 = ImageSequence::load(IMAGE_SEQUENCE_FOLDER_2, WINDOW_2_W, WINDOW_2_H);
+
+    let rotator = Rotator::start();
+
+    let mut viewer = Viewer::new(
+        seq1, (WINDOW_1_W, WINDOW_1_H), (WINDOW_1_X, WINDOW_1_Y),
+        seq2, (WINDOW_2_W, WINDOW_2_H), (WINDOW_2_X, WINDOW_2_Y),
+    );
+
+    while viewer.is_open() {
+        viewer.render(rotator.angle());
     }
-    None
-}
-
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let port_name = std::env::args()
-        .nth(1)
-        .or_else(find_teensy_port)
-        .ok_or("No Teensy found. Plug it in or pass the port path as an argument.")?;
-
-    println!("Opening {}", port_name);
-
-    let port = serialport::new(&port_name, 115200)
-        .timeout(Duration::from_secs(2))
-        .open()?;
-
-    let reader = BufReader::new(port);
-
-    for line in reader.lines() {
-        match line {
-            Ok(s) => {
-                let trimmed = s.trim();
-                match trimmed.parse::<f32>() {
-                    Ok(angle) => {
-                        println!("angle: {:7.3}°", angle);
-                    }
-                    Err(_) => {
-                        // Probably a startup message or garbled byte — show it raw
-                        eprintln!("(non-numeric) {}", trimmed);
-                    }
-                }
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                eprintln!("timeout waiting for data — is the Teensy sending?");
-            }
-            Err(e) => return Err(e.into()),
-        }
-    }
-
-    Ok(())
 }

@@ -133,7 +133,7 @@ impl Display {
             let mut win = Window::new(
                 "Lens — Diamond",
                 w2, h2,
-                WindowOptions { ..Default::default() },
+                WindowOptions { resize: true, ..Default::default() },
             ).ok()?;
             win.set_position(x2, y2);
             win.set_target_fps(60);
@@ -191,7 +191,10 @@ impl Display {
 
         self.light.update(light_brightness);
 
-        if let Some((ref mut win2, w2, h2)) = self.win2 {
+        if let Some((ref mut win2, ref mut stored_w, ref mut stored_h)) = self.win2 {
+            let (w2, h2) = win2.get_size();
+            *stored_w = w2;
+            *stored_h = h2;
             let buf = if self.diamond_w > 0 && self.diamond_h > 0 {
                 rotate_diamond(
                     &self.diamond, self.diamond_w, self.diamond_h,

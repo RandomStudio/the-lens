@@ -25,7 +25,7 @@ impl DebugDisplay {
         let mut window = Window::new(
             "Lens — Debug",
             WIN_W, WIN_H,
-            WindowOptions { resize: false, ..Default::default() },
+            WindowOptions { resize: true, ..Default::default() },
         ).expect("Failed to create debug window");
         window.set_target_fps(30);
 
@@ -66,6 +66,7 @@ impl DebugDisplay {
         let eased = eased_proximity(frame_idx, frame_count);
         let light_brightness = 1.0 - eased;
         let diamond_opacity = eased;
+        let seq_scale = 1.0 + eased;
 
         // Left panel: circle with angle indicator + stats
         let left_w = WIN_W / 2;
@@ -88,6 +89,7 @@ impl DebugDisplay {
                 ("ANGLE", format!("{:.1}°", angle)),
                 ("INDEX", format!("{}", frame_idx)),
                 ("BRIGHTNESS", format!("{:.3}", light_brightness)),
+                ("SCALE", format!("{:.3}x", seq_scale)),
                 ("DIAMOND", format!("{:.3}", diamond_opacity)),
             ];
 
@@ -147,9 +149,33 @@ impl DebugDisplay {
 
         let _ = preview_x_offset; // suppress unused warning
 
-        self.window.update_with_buffer(&buf, WIN_W, WIN_H)
+        // Scale logical buffer to current window size, letterboxing to preserve aspect ratio
+        let (win_w, win_h) = self.window.get_size();
+        let final_buf = fit_to_window(&buf, WIN_W, WIN_H, win_w, win_h);
+        self.window.update_with_buffer(&final_buf, win_w, win_h)
             .unwrap_or_else(|e| eprintln!("[DebugDisplay] update failed: {}", e));
     }
+}
+
+fn fit_to_window(src: &[u32], src_w: usize, src_h: usize, dst_w: usize, dst_h: usize) -> Vec<u32> {
+    if dst_w == src_w && dst_h == src_h {
+        return src.to_vec();
+    }
+    let scale = (dst_w as f64 / src_w as f64).min(dst_h as f64 / src_h as f64);
+    let out_w = (src_w as f64 * scale).round() as usize;
+    let out_h = (src_h as f64 * scale).round() as usize;
+    let off_x = (dst_w - out_w) / 2;
+    let off_y = (dst_h - out_h) / 2;
+
+    let mut dst = vec![0u32; dst_w * dst_h];
+    for dy in 0..out_h {
+        let sy = ((dy as f64 / scale) as usize).min(src_h - 1);
+        for dx in 0..out_w {
+            let sx = ((dx as f64 / scale) as usize).min(src_w - 1);
+            dst[(off_y + dy) * dst_w + (off_x + dx)] = src[sy * src_w + sx];
+        }
+    }
+    dst
 }
 
 fn load_font() -> Option<fontdue::Font> {

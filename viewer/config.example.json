@@ -12,5 +12,6 @@
   "diamond_path": "./sequences/diamondsequence",
   "index_transform": "reverse_quarter",
   "max_scale": 2.0,
-  "brightest_brightness": 1.0
+  "brightest_brightness": 1.0,
+  "easing_multiplier": 1.0
 }

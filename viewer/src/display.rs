@@ -17,6 +17,8 @@ pub struct Display {
     diamond_h: usize,
     seq: ImageSequence,
     light: Light,
+    max_scale: f64,
+    brightest_brightness: f64,
 }
 
 fn display_bounds(index: usize) -> Option<(isize, isize, usize, usize)> {
@@ -147,6 +149,8 @@ impl Display {
         sequence_path: &str,
         diamond_path: &str,
         index_transform: fn(isize, isize) -> isize,
+        max_scale: f64,
+        brightest_brightness: f64,
     ) -> Self {
         let (x1, y1, w1, h1) = display_bounds(SEQUENCE_DISPLAY)
             .unwrap_or_else(|| {
@@ -193,6 +197,8 @@ impl Display {
             diamond_h,
             seq,
             light: Light::new(),
+            max_scale,
+            brightest_brightness,
         }
     }
 
@@ -219,8 +225,8 @@ impl Display {
         let frame = self.seq.frame_at_angle(angle).to_vec();
 
         let eased = eased_proximity(frame_idx, self.seq.frame_count());
-        let light_brightness = 1.0 - eased;
-        let seq_scale = 1.0 + eased;
+        let light_brightness = self.brightest_brightness * (1.0 - eased);
+        let seq_scale = 1.0 + (self.max_scale - 1.0) * eased;
         let diamond_opacity = eased;
 
         self.win1_buffer = scale_from_center(&frame, w1, h1, seq_scale);

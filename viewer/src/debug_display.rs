@@ -18,10 +18,12 @@ pub struct DebugDisplay {
     font: Option<fontdue::Font>,
     preview_w: usize,
     preview_h: usize,
+    max_scale: f64,
+    brightest_brightness: f64,
 }
 
 impl DebugDisplay {
-    pub fn new(sequence_path: &str, index_transform: fn(isize, isize) -> isize) -> Self {
+    pub fn new(sequence_path: &str, index_transform: fn(isize, isize) -> isize, max_scale: f64, brightest_brightness: f64) -> Self {
         let mut window = Window::new(
             "Lens — Debug",
             WIN_W, WIN_H,
@@ -49,7 +51,7 @@ impl DebugDisplay {
             eprintln!("[DebugDisplay] No system font found; text will not render.");
         }
 
-        Self { window, seq, font, preview_w, preview_h }
+        Self { window, seq, font, preview_w, preview_h, max_scale, brightest_brightness }
     }
 
     pub fn is_open(&self) -> bool {
@@ -64,9 +66,9 @@ impl DebugDisplay {
         let frame_count = self.seq.frame_count();
         let frame_idx = self.seq.frame_index_at_angle(angle);
         let eased = eased_proximity(frame_idx, frame_count);
-        let light_brightness = 1.0 - eased;
+        let light_brightness = self.brightest_brightness * (1.0 - eased);
         let diamond_opacity = eased;
-        let seq_scale = 1.0 + eased;
+        let seq_scale = 1.0 + (self.max_scale - 1.0) * eased;
 
         // Left panel: circle with angle indicator + stats
         let left_w = WIN_W / 2;

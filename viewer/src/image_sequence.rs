@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
 
-const CACHE_RADIUS: usize = 50;
+const CACHE_RADIUS: usize = 250;
 
 pub struct ImageSequence {
     paths: Arc<Vec<PathBuf>>,

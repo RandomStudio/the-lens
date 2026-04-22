@@ -146,9 +146,13 @@ fn window_indices(center: usize, n: usize) -> impl Iterator<Item = usize> {
 }
 
 pub fn decode_frame(path: &Path, width: usize, height: usize) -> Vec<u32> {
-    let img = image::open(path)
-        .unwrap_or_else(|_| panic!("failed to open {:?}", path))
-        .to_rgba8();
+    let img = match image::open(path) {
+        Ok(img) => img.to_rgba8(),
+        Err(e) => {
+            eprintln!("[decode_frame] failed to open {:?}: {}", path, e);
+            return vec![0u32; width * height];
+        }
+    };
 
     let img_w = img.width() as usize;
     let img_h = img.height() as usize;

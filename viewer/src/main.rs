@@ -5,6 +5,7 @@ mod easing;
 mod image_sequence;
 mod light;
 mod mqtt_receiver;
+mod mqtt_sender;
 mod receiver;
 mod rotator;
 
@@ -12,6 +13,7 @@ use config::{Config, resolve_index_transform};
 use debug_display::DebugDisplay;
 use display::Display;
 use mqtt_receiver::MqttReceiver;
+use mqtt_sender::MqttSender;
 use receiver::AngleReceiver;
 use rotator::Rotator;
 
@@ -28,9 +30,11 @@ fn main() {
         }
     } else {
         let receiver = Rotator::new();
+        let sender = MqttSender::new(&cfg.mqtt);
         let mut disp = Display::new(&cfg.sequence_path, &cfg.diamond_path, transform);
         while disp.is_open() {
             let angle = receiver.angle();
+            sender.publish_angle(angle);
             disp.render(angle);
         }
         disp.turn_off_light();

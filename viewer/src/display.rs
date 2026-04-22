@@ -4,7 +4,7 @@ use crate::image_sequence::ImageSequence;
 use crate::light::Light;
 
 const SEQUENCE_DISPLAY: usize = 1;
-const DIAMOND_DISPLAY: usize = 2;
+const DIAMOND_DISPLAY: usize = 0;
 
 pub struct Display {
     win1: Window,

@@ -146,10 +146,13 @@ fn window_indices(center: usize, n: usize) -> impl Iterator<Item = usize> {
 }
 
 pub fn decode_frame(path: &Path, width: usize, height: usize) -> Vec<u32> {
-    let img = match image::open(path) {
+    let img = match image::ImageReader::open(path)
+        .and_then(|r| r.with_guessed_format())
+        .and_then(|r| r.decode().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)))
+    {
         Ok(img) => img.to_rgba8(),
         Err(e) => {
-            eprintln!("[decode_frame] failed to open {:?}: {}", path, e);
+            eprintln!("[decode_frame] failed to decode {:?}: {}", path, e);
             return vec![0u32; width * height];
         }
     };

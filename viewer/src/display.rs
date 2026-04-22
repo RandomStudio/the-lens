@@ -11,9 +11,7 @@ pub struct Display {
     win1_size: (usize, usize),
     win2: Option<(Window, usize, usize)>,
     seq: ImageSequence,
-    diamond: Vec<u8>,
-    diamond_w: usize,
-    diamond_h: usize,
+    diamond_seq: ImageSequence,
     light: Light,
 }
 
@@ -56,41 +54,6 @@ fn scale_from_center(src: &[u32], w: usize, h: usize, scale: f64) -> Vec<u32> {
     out
 }
 
-fn rotate_diamond(
-    src: &[u8], sw: usize, sh: usize,
-    dst_w: usize, dst_h: usize,
-    angle_deg: f64, opacity: f64,
-) -> Vec<u32> {
-    let a = angle_deg.to_radians();
-    let cos_a = a.cos();
-    let sin_a = a.sin();
-    let src_cx = sw as f64 / 2.0;
-    let src_cy = sh as f64 / 2.0;
-    let dst_cx = dst_w as f64 / 2.0;
-    let dst_cy = dst_h as f64 / 2.0;
-    let scale = (dst_w as f64 / sw as f64).min(dst_h as f64 / sh as f64);
-
-    let mut out = vec![0u32; dst_w * dst_h];
-    for oy in 0..dst_h {
-        for ox in 0..dst_w {
-            let dx = ox as f64 - dst_cx;
-            let dy = oy as f64 - dst_cy;
-            // Inverse rotation to find source pixel
-            let sx = src_cx + (dx * cos_a + dy * sin_a) / scale;
-            let sy = src_cy + (-dx * sin_a + dy * cos_a) / scale;
-            let sx_i = sx.round() as isize;
-            let sy_i = sy.round() as isize;
-            if sx_i >= 0 && sx_i < sw as isize && sy_i >= 0 && sy_i < sh as isize {
-                let p = (sy_i as usize * sw + sx_i as usize) * 4;
-                let r = (src[p] as f64 * opacity) as u32;
-                let g = (src[p + 1] as f64 * opacity) as u32;
-                let b = (src[p + 2] as f64 * opacity) as u32;
-                out[oy * dst_w + ox] = (r << 16) | (g << 8) | b;
-            }
-        }
-    }
-    out
-}
 
 impl Display {
     pub fn new(
@@ -115,20 +78,6 @@ impl Display {
         win1.set_position(x1, y1);
         win1.set_target_fps(60);
 
-        let (diamond, diamond_w, diamond_h) = match image::open(diamond_path) {
-            Ok(img) => {
-                let rgba = img.to_rgba8();
-                let w = rgba.width() as usize;
-                let h = rgba.height() as usize;
-                println!("[Display] Loaded diamond {}×{}", w, h);
-                (rgba.into_raw(), w, h)
-            }
-            Err(e) => {
-                eprintln!("[Display] Failed to load diamond '{}': {}", diamond_path, e);
-                (vec![], 0, 0)
-            }
-        };
-
         let win2 = display_bounds(DIAMOND_DISPLAY).and_then(|(x2, y2, w2, h2)| {
             let mut win = Window::new(
                 "Lens — Diamond",
@@ -144,14 +93,17 @@ impl Display {
             eprintln!("[Display] Display {} not available — diamond window skipped", DIAMOND_DISPLAY);
         }
 
+        let mut diamond_seq = ImageSequence::load(diamond_path, index_transform);
+        if let Some((_, w2, h2)) = &win2 {
+            diamond_seq.set_dimensions(*w2, *h2);
+        }
+
         Self {
             win1_size: (w1, h1),
             win1,
             win2,
             seq,
-            diamond,
-            diamond_w,
-            diamond_h,
+            diamond_seq,
             light: Light::new(),
         }
     }
@@ -193,16 +145,18 @@ impl Display {
 
         if let Some((ref mut win2, ref mut stored_w, ref mut stored_h)) = self.win2 {
             let (w2, h2) = win2.get_size();
-            *stored_w = w2;
-            *stored_h = h2;
-            let buf = if self.diamond_w > 0 && self.diamond_h > 0 {
-                rotate_diamond(
-                    &self.diamond, self.diamond_w, self.diamond_h,
-                    w2, h2, angle, diamond_opacity,
-                )
-            } else {
-                vec![0u32; w2 * h2]
-            };
+            if (w2, h2) != (*stored_w, *stored_h) {
+                *stored_w = w2;
+                *stored_h = h2;
+                self.diamond_seq.set_dimensions(w2, h2);
+            }
+            let raw = self.diamond_seq.frame_at_angle(angle);
+            let buf: Vec<u32> = raw.iter().map(|&px| {
+                let r = (((px >> 16) & 0xFF) as f64 * diamond_opacity) as u32;
+                let g = (((px >> 8) & 0xFF) as f64 * diamond_opacity) as u32;
+                let b = ((px & 0xFF) as f64 * diamond_opacity) as u32;
+                (r << 16) | (g << 8) | b
+            }).collect();
             win2.update_with_buffer(&buf, w2, h2)
                 .unwrap_or_else(|e| eprintln!("[Display] win2 update failed: {}", e));
         }

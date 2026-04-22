@@ -9,6 +9,6 @@
     "lerp_speed": 8.0
   },
   "sequence_path": "./sequences/lens",
-  "diamond_path": "./diamond.jpg",
+  "diamond_path": "./sequences/diamondsequence",
   "index_transform": "reverse_quarter"
 }

@@ -1,7 +1,7 @@
 use serde::Deserialize;
 
 fn default_lerp_speed() -> f64 { 8.0 }
-fn default_diamond_path() -> String { "./diamond.jpg".to_string() }
+fn default_diamond_path() -> String { "./sequences/diamond".to_string() }
 fn default_index_transform() -> String { "identity".to_string() }
 
 #[derive(Deserialize, Clone)]

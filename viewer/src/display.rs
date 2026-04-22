@@ -9,7 +9,9 @@ const DIAMOND_DISPLAY: usize = 0;
 pub struct Display {
     win1: Window,
     win1_size: (usize, usize),
+    win1_buffer: Vec<u32>,
     win2: Option<(Window, usize, usize)>,
+    win2_buffer: Vec<u32>,
     seq: ImageSequence,
     diamond_seq: ImageSequence,
     light: Light,
@@ -101,7 +103,9 @@ impl Display {
         Self {
             win1_size: (w1, h1),
             win1,
+            win1_buffer: vec![0u32; w1 * h1],
             win2,
+            win2_buffer: vec![],
             seq,
             diamond_seq,
             light: Light::new(),
@@ -135,9 +139,9 @@ impl Display {
         let light_brightness = 1.0 - eased;
 
         let seq_scale = 1.0 + eased;  // 1.0 → 2.0 as eased goes 0 → 1
-        let scaled_frame = scale_from_center(&frame, w1, h1, seq_scale);
+        self.win1_buffer = scale_from_center(&frame, w1, h1, seq_scale);
 
-        self.win1.update_with_buffer(&scaled_frame, w1, h1)
+        self.win1.update_with_buffer(&self.win1_buffer, w1, h1)
             .unwrap_or_else(|e| eprintln!("[Display] win1 update failed: {}", e));
         let diamond_opacity = eased;
 
@@ -151,13 +155,13 @@ impl Display {
                 self.diamond_seq.set_dimensions(w2, h2);
             }
             let raw = self.diamond_seq.frame_at_angle(angle);
-            let buf: Vec<u32> = raw.iter().map(|&px| {
+            self.win2_buffer = raw.iter().map(|&px| {
                 let r = (((px >> 16) & 0xFF) as f64 * diamond_opacity) as u32;
                 let g = (((px >> 8) & 0xFF) as f64 * diamond_opacity) as u32;
                 let b = ((px & 0xFF) as f64 * diamond_opacity) as u32;
                 (r << 16) | (g << 8) | b
             }).collect();
-            win2.update_with_buffer(&buf, w2, h2)
+            win2.update_with_buffer(&self.win2_buffer, w2, h2)
                 .unwrap_or_else(|e| eprintln!("[Display] win2 update failed: {}", e));
         }
 

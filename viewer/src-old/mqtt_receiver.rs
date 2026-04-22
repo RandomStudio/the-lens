@@ -26,6 +26,7 @@ impl MqttReceiver {
         let (client, mut connection) = Client::new(opts, 32);
 
         client.subscribe(&cfg.topic, QoS::AtMostOnce).expect("MQTT subscribe failed");
+
         println!("[MqttReceiver] Subscribed to {} on {}:{}", cfg.topic, cfg.broker, cfg.port);
 
         thread::spawn(move || {

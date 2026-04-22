@@ -1,33 +1,14 @@
 {
-  "receiver": "rotator",
-  "mqtt_send": false,
-  "light_send": true,
+  "is_debug_screen": false,
   "mqtt": {
     "broker": "10.112.10.10",
     "port": 1883,
     "topic": "prototype/lens/angle",
-    "debug_topic": "prototype/lens/debug",
     "username": "mqtt",
     "password": "password",
     "lerp_speed": 8.0
   },
-  "sequences": [
-    {
-      "path": "./sequences/lens",
-      "display": 1,
-      "hue_shift": 0,
-      "hue_opacity": 0.35,
-      "scale": 1.0,
-      "scales_with_rotate": {
-        "target_index": 120,
-        "scale": 1.5
-      },
-      "brightness_with_rotate": {
-        "target_index": 120,
-        "start_brightness": 0.0,
-        "end_brightness": 1.0
-      },
-      "index_transform": "reverse_quarter"
-    }
-  ]
+  "sequence_path": "./sequences/lens",
+  "diamond_path": "./diamond.jpg",
+  "index_transform": "reverse_quarter"
 }

@@ -62,6 +62,7 @@ impl Rotator {
 
         Self { angle }
     }
+
 }
 
 impl AngleReceiver for Rotator {

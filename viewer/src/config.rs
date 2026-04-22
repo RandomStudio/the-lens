@@ -1,56 +1,30 @@
 use serde::Deserialize;
 
 fn default_lerp_speed() -> f64 { 8.0 }
+fn default_diamond_path() -> String { "./diamond.jpg".to_string() }
+fn default_index_transform() -> String { "identity".to_string() }
 
 #[derive(Deserialize, Clone)]
 pub struct MqttConfig {
     pub broker: String,
     pub port: u16,
     pub topic: String,
-    pub debug_topic: Option<String>,
     pub username: String,
     pub password: String,
     #[serde(default = "default_lerp_speed")]
     pub lerp_speed: f64,
 }
 
-#[derive(Deserialize, Clone)]
-pub struct ScalesWithRotateConfig {
-    pub target_index: usize,
-    pub scale: f64,
-}
-
-#[derive(Deserialize, Clone)]
-pub struct BrightnessWithRotateConfig {
-    pub target_index: usize,
-    pub start_brightness: f64,
-    pub end_brightness: f64,
-}
-
-#[derive(Deserialize)]
-pub struct SequenceConfig {
-    pub path: String,
-    pub display: usize,
-    pub scale: Option<f64>,
-    pub scales_with_rotate: Option<ScalesWithRotateConfig>,
-    pub brightness_with_rotate: Option<BrightnessWithRotateConfig>,
-    /// Named index transform. Options: see `resolve_index_transform()`
-    pub index_transform: Option<String>,
-    /// When true, the rendered frame is rotated to match the current angle.
-    #[serde(default)]
-    pub match_angle: bool,
-}
-
 #[derive(Deserialize)]
 pub struct Config {
     pub mqtt: MqttConfig,
-    /// Angle source: "rotator" or "mqtt"
-    pub receiver: String,
-    pub mqtt_send: bool,
-    pub light_send: bool,
-    pub sequences: Vec<SequenceConfig>,
+    pub sequence_path: String,
+    #[serde(default = "default_diamond_path")]
+    pub diamond_path: String,
+    #[serde(default = "default_index_transform")]
+    pub index_transform: String,
     #[serde(default)]
-    pub is_debug_display: bool,
+    pub is_debug_screen: bool,
 }
 
 impl Config {
@@ -62,10 +36,10 @@ impl Config {
     }
 }
 
-pub fn resolve_index_transform(name: Option<&str>) -> fn(isize, isize) -> isize {
+pub fn resolve_index_transform(name: &str) -> fn(isize, isize) -> isize {
     match name {
-        Some("reverse_quarter") => |index, total| total - index - (total / 4),
-        Some("identity") | None => |idx, _| idx,
-        Some(other) => panic!("Unknown index_transform '{}'. Options: identity, reverse_quarter", other),
+        "reverse_quarter" => |index, total| total - index - (total / 4),
+        "identity" | "" => |idx, _| idx,
+        other => panic!("Unknown index_transform '{}'. Options: identity, reverse_quarter", other),
     }
 }

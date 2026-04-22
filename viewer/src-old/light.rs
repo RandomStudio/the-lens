@@ -27,13 +27,13 @@ impl Light {
 
         let mut dmx = [0u8; 512];
 
-        // Mode 4: RGBWW 8-bit — soft white via warm-biased W/WW channels
+        // Mode 4: RGBWW 8-bit — studio white via W/WW channels, no colour
         dmx[INFINIMAT_START]     = intensity; // Ch1: Intensity
         dmx[INFINIMAT_START + 1] = 0;         // Ch2: Red
         dmx[INFINIMAT_START + 2] = 0;         // Ch3: Green
         dmx[INFINIMAT_START + 3] = 0;         // Ch4: Blue
-        dmx[INFINIMAT_START + 4] = 128;       // Ch5: White (cool)
-        dmx[INFINIMAT_START + 5] = 255;       // Ch6: Warm White
+        dmx[INFINIMAT_START + 4] = 255;       // Ch5: White
+        dmx[INFINIMAT_START + 5] = 128;       // Ch6: Warm White
 
         let packet = artnet_dmx_packet(0, &dmx);
         let _ = self.socket.send_to(&packet, ARTNET_ADDR);
@@ -43,13 +43,13 @@ impl Light {
 fn artnet_dmx_packet(universe: u16, dmx: &[u8; 512]) -> Vec<u8> {
     let mut p = Vec::with_capacity(18 + 512);
     p.extend_from_slice(b"Art-Net\0");
-    p.push(0x00); p.push(0x50);               // OpCode ArtDmx, little-endian
-    p.push(0x00); p.push(0x0e);               // protocol version 14, big-endian
-    p.push(0);                                 // sequence (0 = disabled)
-    p.push(0);                                 // physical
-    p.push((universe & 0xff) as u8);          // universe low byte
-    p.push(((universe >> 8) & 0x7f) as u8);   // universe high byte (15-bit)
-    p.push(0x02); p.push(0x00);               // length 512, big-endian
+    p.push(0x00); p.push(0x50);           // OpCode ArtDmx, little-endian
+    p.push(0x00); p.push(0x0e);           // protocol version 14, big-endian
+    p.push(0);                             // sequence (0 = disabled)
+    p.push(0);                             // physical
+    p.push((universe & 0xff) as u8);      // universe low byte
+    p.push(((universe >> 8) & 0x7f) as u8); // universe high byte (15-bit)
+    p.push(0x02); p.push(0x00);           // length 512, big-endian
     p.extend_from_slice(dmx);
     p
 }

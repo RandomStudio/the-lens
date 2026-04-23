@@ -5,7 +5,7 @@ const SCALE_INNER: f64 = 0.06;
 const SCALE_OUTER: f64 = 0.42;
 
 // Light: off within 8% of target (~29°), linear fade to full at 180°
-const LIGHT_INNER: f64 = 0.08;
+const LIGHT_INNER: f64 = 0.16;
 const LIGHT_OUTER: f64 = 0.50;
 
 // Diamond: fades in from 10% (~36°), fully visible within 2.5% (~9°)

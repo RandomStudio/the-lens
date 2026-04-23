@@ -3,7 +3,7 @@ use serde::Deserialize;
 fn default_lerp_speed() -> f64 { 8.0 }
 fn default_diamond_path() -> String { "./sequences/diamond".to_string() }
 fn default_index_transform() -> String { "identity".to_string() }
-fn default_max_scale() -> f64 { 2.0 }
+fn default_max_scale() -> f64 { 3.0 }
 fn default_brightest_brightness() -> f64 { 1.0 }
 fn default_easing_multiplier() -> f64 { 1.0 }
 

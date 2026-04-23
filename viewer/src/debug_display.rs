@@ -1,5 +1,5 @@
 use minifb::{Key, Window, WindowOptions};
-use crate::easing::eased_proximity;
+use crate::easing::{eased_proximity_scale, eased_proximity_diamond};
 use crate::image_sequence::{ImageSequence, scale_frame_to};
 
 const WIN_W: usize = 1400;
@@ -66,10 +66,9 @@ impl DebugDisplay {
 
         let frame_count = self.seq.frame_count();
         let frame_idx = self.seq.frame_index_at_angle(angle);
-        let eased = eased_proximity(frame_idx, frame_count);
-        let e = (eased * self.easing_multiplier).clamp(0.0, 1.0);
+        let e = (eased_proximity_scale(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
         let light_brightness = self.brightest_brightness * (1.0 - e);
-        let diamond_opacity = e;
+        let diamond_opacity = (eased_proximity_diamond(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
         let seq_scale = 1.0 + (self.max_scale - 1.0) * e;
 
         // Left panel: circle with angle indicator + stats

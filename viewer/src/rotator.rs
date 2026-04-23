@@ -72,8 +72,14 @@ impl AngleReceiver for Rotator {
 
 fn find_teensy_port() -> Option<String> {
     let ports = serialport::available_ports().ok()?;
-    ports
-        .into_iter()
-        .find(|p| p.port_name.contains("usbmodem"))
-        .map(|p| p.port_name)
+    ports.into_iter().find(|p| {
+        // Prefer matching by PJRC USB vendor ID (works on all platforms)
+        if let serialport::SerialPortType::UsbPort(info) = &p.port_type {
+            if info.vid == 0x16C0 {
+                return true;
+            }
+        }
+        // Fallback: macOS usbmodem or Linux ttyACM
+        p.port_name.contains("usbmodem") || p.port_name.contains("ttyACM")
+    }).map(|p| p.port_name)
 }

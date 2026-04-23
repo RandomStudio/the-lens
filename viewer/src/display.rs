@@ -38,10 +38,60 @@ fn display_bounds(index: usize) -> Option<(isize, isize, usize, usize)> {
         displays.sort_by_key(|&(x, y, _, _)| (x, y));
         return displays.get(index).copied();
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "linux")]
+    {
+        return linux_display_bounds(index);
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         let _ = index;
         Some((0, 0, 1920, 1080))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_display_bounds(index: usize) -> Option<(isize, isize, usize, usize)> {
+    use std::process::Command;
+    if let Ok(output) = Command::new("xrandr").arg("--current").output() {
+        let text = String::from_utf8_lossy(&output.stdout);
+        let mut displays: Vec<(isize, isize, usize, usize)> = text.lines()
+            .filter_map(parse_xrandr_line)
+            .collect();
+        if !displays.is_empty() {
+            displays.sort_by_key(|&(x, y, _, _)| (x, y));
+            return displays.get(index).copied();
+        }
+    }
+    // Fallback for Wayland or if xrandr unavailable
+    if index == 0 { Some((0, 0, 1920, 1080)) } else { None }
+}
+
+#[cfg(target_os = "linux")]
+fn parse_xrandr_line(line: &str) -> Option<(isize, isize, usize, usize)> {
+    if !line.contains(" connected") {
+        return None;
+    }
+    line.split_whitespace().find_map(try_parse_geometry)
+}
+
+#[cfg(target_os = "linux")]
+fn try_parse_geometry(token: &str) -> Option<(isize, isize, usize, usize)> {
+    if !token.contains('x') || !token.contains('+') {
+        return None;
+    }
+    let x_idx = token.find('x')?;
+    let w: usize = token[..x_idx].parse().ok()?;
+    let after_w = &token[x_idx + 1..];
+    let plus_idx = after_w.find('+')?;
+    let h: usize = after_w[..plus_idx].parse().ok()?;
+    let offsets = &after_w[plus_idx..];
+    let parts: Vec<&str> = offsets.split('+').filter(|s| !s.is_empty()).collect();
+    if parts.len() == 2 {
+        let x: isize = parts[0].parse().ok()?;
+        let y: isize = parts[1].parse().ok()?;
+        Some((x, y, w, h))
+    } else {
+        None
     }
 }
 
@@ -166,7 +216,7 @@ impl Display {
         let mut win1 = Window::new(
             "Lens — Sequence",
             w1, h1,
-            WindowOptions { resize: true, ..Default::default() },
+            WindowOptions { resize: true, borderless: true, ..Default::default() },
         ).expect("Failed to create sequence window");
         win1.set_position(x1, y1);
         win1.set_target_fps(60);
@@ -175,7 +225,7 @@ impl Display {
             let mut win = Window::new(
                 "Lens — Diamond",
                 w2, h2,
-                WindowOptions { resize: true, ..Default::default() },
+                WindowOptions { resize: true, borderless: true, ..Default::default() },
             ).ok()?;
             win.set_position(x2, y2);
             win.set_target_fps(60);

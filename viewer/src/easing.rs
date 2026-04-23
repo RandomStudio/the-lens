@@ -1,11 +1,15 @@
 pub const TARGET_FRAME: usize = 30;
 
-// Scale/brightness: starts ~150°, fully active at ~20°
+// Scale: starts ~150°, fully active at ~20°
 const SCALE_INNER: f64 = 0.06;
 const SCALE_OUTER: f64 = 0.42;
 
-// Diamond reflections: much narrower, starts ~35°, fully active at ~7°
-const DIAMOND_INNER: f64 = 0.02;
+// Light: off within 8% of target (~29°), linear fade to full at 180°
+const LIGHT_INNER: f64 = 0.08;
+const LIGHT_OUTER: f64 = 0.50;
+
+// Diamond: fades in from 10% (~36°), fully visible within 2.5% (~9°)
+const DIAMOND_INNER: f64 = 0.025;
 const DIAMOND_OUTER: f64 = 0.10;
 
 // Returns 1.0 within inner zone, 0.0 beyond outer zone, linear between.
@@ -26,6 +30,10 @@ fn eased_proximity(frame_index: usize, frame_count: usize, inner_fraction: f64, 
 
 pub fn eased_proximity_scale(frame_index: usize, frame_count: usize) -> f64 {
     eased_proximity(frame_index, frame_count, SCALE_INNER, SCALE_OUTER)
+}
+
+pub fn eased_proximity_light(frame_index: usize, frame_count: usize) -> f64 {
+    eased_proximity(frame_index, frame_count, LIGHT_INNER, LIGHT_OUTER)
 }
 
 pub fn eased_proximity_diamond(frame_index: usize, frame_count: usize) -> f64 {

@@ -1,5 +1,5 @@
 use minifb::{Key, Window, WindowOptions};
-use crate::easing::{eased_proximity_scale, eased_proximity_diamond};
+use crate::easing::{eased_proximity_scale, eased_proximity_light, eased_proximity_diamond};
 use crate::image_sequence::ImageSequence;
 use crate::light::Light;
 
@@ -17,6 +17,7 @@ pub struct Display {
     diamond_h: usize,
     seq: ImageSequence,
     light: Light,
+    min_scale: f64,
     max_scale: f64,
     brightest_brightness: f64,
     easing_multiplier: f64,
@@ -200,6 +201,7 @@ impl Display {
         sequence_path: &str,
         diamond_path: &str,
         index_transform: fn(isize, isize) -> isize,
+        min_scale: f64,
         max_scale: f64,
         brightest_brightness: f64,
         easing_multiplier: f64,
@@ -249,6 +251,7 @@ impl Display {
             diamond_h,
             seq,
             light: Light::new(),
+            min_scale,
             max_scale,
             brightest_brightness,
             easing_multiplier,
@@ -279,8 +282,9 @@ impl Display {
 
         let frame_count = self.seq.frame_count();
         let e = (eased_proximity_scale(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
-        let light_brightness = self.brightest_brightness * (1.0 - e);
-        let seq_scale = 1.0 + (self.max_scale - 1.0) * e;
+        let light_e = (eased_proximity_light(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
+        let light_brightness = self.brightest_brightness * (1.0 - light_e);
+        let seq_scale = self.min_scale + (self.max_scale - self.min_scale) * e;
         let diamond_opacity = (eased_proximity_diamond(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
 
         self.win1_buffer = scale_from_center(&frame, w1, h1, seq_scale);

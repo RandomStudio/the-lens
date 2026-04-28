@@ -14,7 +14,8 @@ const DIM_TEXT_COLOR: u32 = 0x666680;
 
 pub struct DebugDisplay {
     window: Window,
-    seq: ImageSequence,
+    fg_seq: ImageSequence,
+    bg_seq: ImageSequence,
     font: Option<fontdue::Font>,
     preview_w: usize,
     preview_h: usize,
@@ -33,12 +34,16 @@ impl DebugDisplay {
         ).expect("Failed to create debug window");
         window.set_target_fps(30);
 
-        let mut seq = ImageSequence::load(sequence_path, index_transform);
+        let fg_path = format!("{}/1", sequence_path.trim_end_matches('/'));
+        let bg_path = format!("{}/2", sequence_path.trim_end_matches('/'));
+        let mut fg_seq = ImageSequence::load(&fg_path, index_transform);
+        let mut bg_seq = ImageSequence::load(&bg_path, index_transform);
 
-        // Size preview panel to maintain native aspect ratio
+        // Size preview panel to maintain native aspect ratio (use whichever sequence has dimensions)
         let right_panel_w = WIN_W / 2;
         let right_panel_h = WIN_H;
-        let (preview_w, preview_h) = if let Some((nw, nh)) = seq.peek_dimensions() {
+        let native = fg_seq.peek_dimensions().or_else(|| bg_seq.peek_dimensions());
+        let (preview_w, preview_h) = if let Some((nw, nh)) = native {
             let aspect = nw as f64 / nh as f64;
             let h = right_panel_h;
             let w = (h as f64 * aspect) as usize;
@@ -46,14 +51,15 @@ impl DebugDisplay {
         } else {
             (right_panel_w, right_panel_h)
         };
-        seq.set_dimensions(preview_w, preview_h);
+        fg_seq.set_dimensions(preview_w, preview_h);
+        bg_seq.set_dimensions(preview_w, preview_h);
 
         let font = load_font();
         if font.is_none() {
             eprintln!("[DebugDisplay] No system font found; text will not render.");
         }
 
-        Self { window, seq, font, preview_w, preview_h, min_scale, max_scale, brightest_brightness, easing_multiplier }
+        Self { window, fg_seq, bg_seq, font, preview_w, preview_h, min_scale, max_scale, brightest_brightness, easing_multiplier }
     }
 
     pub fn is_open(&self) -> bool {
@@ -65,8 +71,8 @@ impl DebugDisplay {
     pub fn render(&mut self, angle: f64) {
         let mut buf = vec![BG_COLOR; WIN_W * WIN_H];
 
-        let frame_count = self.seq.frame_count();
-        let frame_idx = self.seq.frame_index_at_angle(angle);
+        let frame_count = self.fg_seq.frame_count();
+        let frame_idx = self.fg_seq.frame_index_at_angle(angle);
         let e = (eased_proximity_scale(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
         let light_e = (eased_proximity_light(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
         let light_brightness = self.brightest_brightness * (1.0 - light_e);
@@ -123,17 +129,24 @@ impl DebugDisplay {
         let px_offset = right_start + (panel_w.saturating_sub(self.preview_w)) / 2;
         let py_offset = (WIN_H.saturating_sub(self.preview_h)) / 2;
 
-        if frame_count > 0 {
-            let frame = self.seq.frame_at_angle(angle).to_vec();
+        if frame_count > 0 || self.bg_seq.frame_count() > 0 {
             let pw = self.preview_w;
             let ph = self.preview_h;
-            // Scale to actual preview dims if sequence was decoded at different size
-            let preview = if frame.len() == pw * ph {
-                frame
-            } else {
-                let seq_w = (frame.len() as f64).sqrt() as usize; // approximate, fallback
-                scale_frame_to(&frame, seq_w, seq_w, pw, ph)
+            let fg_frame = self.fg_seq.frame_at_angle(angle).to_vec();
+            let bg_frame = self.bg_seq.frame_at_angle(angle).to_vec();
+
+            let normalize = |frame: Vec<u32>| -> Vec<u32> {
+                if frame.len() == pw * ph {
+                    frame
+                } else {
+                    let seq_w = (frame.len() as f64).sqrt() as usize; // approximate, fallback
+                    scale_frame_to(&frame, seq_w, seq_w, pw, ph)
+                }
             };
+
+            let mut preview = normalize(bg_frame);
+            let fg_norm = normalize(fg_frame);
+            composite_over_dbg(&fg_norm, &mut preview);
 
             for py in 0..ph {
                 let dst_y = py_offset + py;
@@ -159,6 +172,31 @@ impl DebugDisplay {
         let final_buf = fit_to_window(&buf, WIN_W, WIN_H, win_w, win_h);
         self.window.update_with_buffer(&final_buf, win_w, win_h)
             .unwrap_or_else(|e| eprintln!("[DebugDisplay] update failed: {}", e));
+    }
+}
+
+fn composite_over_dbg(fg: &[u32], bg: &mut [u32]) {
+    let n = fg.len().min(bg.len());
+    for i in 0..n {
+        let f = fg[i];
+        let a = (f >> 24) & 0xff;
+        if a == 0 { continue; }
+        if a == 0xff {
+            bg[i] = f & 0x00ff_ffff;
+            continue;
+        }
+        let af = a as u32;
+        let inv = 255 - af;
+        let fr = (f >> 16) & 0xff;
+        let fg_g = (f >> 8) & 0xff;
+        let fb = f & 0xff;
+        let br = (bg[i] >> 16) & 0xff;
+        let bg_g = (bg[i] >> 8) & 0xff;
+        let bb = bg[i] & 0xff;
+        let r = (fr * af + br * inv) / 255;
+        let g = (fg_g * af + bg_g * inv) / 255;
+        let b = (fb * af + bb * inv) / 255;
+        bg[i] = (r << 16) | (g << 8) | b;
     }
 }
 

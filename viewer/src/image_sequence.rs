@@ -178,7 +178,10 @@ pub fn decode_frame(path: &Path, width: usize, height: usize) -> Vec<u32> {
             let sx = ((ox as f64 / scale) as usize).min(img_w - 1);
             let p = (sy * img_w + sx) * 4;
             canvas[dst_row * width + ox] =
-                ((raw[p] as u32) << 16) | ((raw[p + 1] as u32) << 8) | (raw[p + 2] as u32);
+                ((raw[p + 3] as u32) << 24)
+                | ((raw[p] as u32) << 16)
+                | ((raw[p + 1] as u32) << 8)
+                | (raw[p + 2] as u32);
         }
     }
 

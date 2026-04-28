@@ -15,7 +15,8 @@ pub struct Display {
     diamond: Vec<u32>,
     diamond_w: usize,
     diamond_h: usize,
-    seq: ImageSequence,
+    fg_seq: ImageSequence,
+    bg_seq: ImageSequence,
     light: Light,
     min_scale: f64,
     max_scale: f64,
@@ -93,6 +94,31 @@ fn try_parse_geometry(token: &str) -> Option<(isize, isize, usize, usize)> {
         Some((x, y, w, h))
     } else {
         None
+    }
+}
+
+fn composite_over(fg: &[u32], bg: &mut [u32]) {
+    let n = fg.len().min(bg.len());
+    for i in 0..n {
+        let f = fg[i];
+        let a = (f >> 24) & 0xff;
+        if a == 0 { continue; }
+        if a == 0xff {
+            bg[i] = f & 0x00ff_ffff;
+            continue;
+        }
+        let af = a as u32;
+        let inv = 255 - af;
+        let fr = (f >> 16) & 0xff;
+        let fg_g = (f >> 8) & 0xff;
+        let fb = f & 0xff;
+        let br = (bg[i] >> 16) & 0xff;
+        let bg_g = (bg[i] >> 8) & 0xff;
+        let bb = bg[i] & 0xff;
+        let r = (fr * af + br * inv) / 255;
+        let g = (fg_g * af + bg_g * inv) / 255;
+        let b = (fb * af + bb * inv) / 255;
+        bg[i] = (r << 16) | (g << 8) | b;
     }
 }
 
@@ -212,8 +238,12 @@ impl Display {
                 (0, 0, 1280, 720)
             });
 
-        let mut seq = ImageSequence::load(sequence_path, index_transform);
-        seq.set_dimensions(w1, h1);
+        let fg_path = format!("{}/1", sequence_path.trim_end_matches('/'));
+        let bg_path = format!("{}/2", sequence_path.trim_end_matches('/'));
+        let mut fg_seq = ImageSequence::load(&fg_path, index_transform);
+        let mut bg_seq = ImageSequence::load(&bg_path, index_transform);
+        fg_seq.set_dimensions(w1, h1);
+        bg_seq.set_dimensions(w1, h1);
 
         let mut win1 = Window::new(
             "Lens — Sequence",
@@ -249,7 +279,8 @@ impl Display {
             diamond,
             diamond_w,
             diamond_h,
-            seq,
+            fg_seq,
+            bg_seq,
             light: Light::new(),
             min_scale,
             max_scale,
@@ -273,21 +304,26 @@ impl Display {
         let new_size = self.win1.get_size();
         if new_size != self.win1_size {
             self.win1_size = new_size;
-            self.seq.set_dimensions(new_size.0, new_size.1);
+            self.fg_seq.set_dimensions(new_size.0, new_size.1);
+            self.bg_seq.set_dimensions(new_size.0, new_size.1);
         }
 
         let (w1, h1) = self.win1_size;
-        let frame_idx = self.seq.frame_index_at_angle(angle);
-        let frame = self.seq.frame_at_angle(angle).to_vec();
+        let frame_idx = self.fg_seq.frame_index_at_angle(angle);
+        let fg_frame = self.fg_seq.frame_at_angle(angle).to_vec();
+        let bg_frame = self.bg_seq.frame_at_angle(angle).to_vec();
 
-        let frame_count = self.seq.frame_count();
+        let frame_count = self.fg_seq.frame_count();
         let e = (eased_proximity_scale(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
         let light_e = (eased_proximity_light(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
         let light_brightness = self.brightest_brightness * (1.0 - light_e);
         let seq_scale = self.min_scale + (self.max_scale - self.min_scale) * e;
         let diamond_opacity = (eased_proximity_diamond(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
 
-        self.win1_buffer = scale_from_center(&frame, w1, h1, seq_scale);
+        let mut composed = scale_from_center(&bg_frame, w1, h1, seq_scale);
+        let scaled_fg = scale_from_center(&fg_frame, w1, h1, seq_scale);
+        composite_over(&scaled_fg, &mut composed);
+        self.win1_buffer = composed;
         self.win1.update_with_buffer(&self.win1_buffer, w1, h1)
             .unwrap_or_else(|e| eprintln!("[Display] win1 update failed: {}", e));
 

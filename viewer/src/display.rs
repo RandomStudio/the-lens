@@ -318,12 +318,13 @@ impl Display {
         let light_e = (eased_proximity_light(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
         let light_brightness = self.brightest_brightness * (1.0 - light_e);
         // let seq_scale = self.min_scale + (self.max_scale - self.min_scale) * e;
-        let seq_scale = 1.0;
+        let seq_scale: f64 = 1.0;
         let diamond_opacity = (eased_proximity_diamond(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
 
-        let mut composed = scale_from_center(&bg_frame, w1, h1, seq_scale);
-        let scaled_fg = scale_from_center(&fg_frame, w1, h1, seq_scale);
-        composite_over(&scaled_fg, &mut composed);
+        let identity_scale = (seq_scale - 1.0).abs() < f64::EPSILON;
+        let mut composed = if identity_scale { bg_frame } else { scale_from_center(&bg_frame, w1, h1, seq_scale) };
+        let fg_to_composite = if identity_scale { fg_frame } else { scale_from_center(&fg_frame, w1, h1, seq_scale) };
+        composite_over(&fg_to_composite, &mut composed);
         self.win1_buffer = composed;
         self.win1.update_with_buffer(&self.win1_buffer, w1, h1)
             .unwrap_or_else(|e| eprintln!("[Display] win1 update failed: {}", e));

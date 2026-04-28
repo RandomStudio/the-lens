@@ -73,11 +73,10 @@ impl DebugDisplay {
 
         let frame_count = self.fg_seq.frame_count();
         let frame_idx = self.fg_seq.frame_index_at_angle(angle);
-        let e = (eased_proximity_scale(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
         let light_e = (eased_proximity_light(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
         let light_brightness = self.brightest_brightness * (1.0 - light_e);
         let diamond_opacity = (eased_proximity_diamond(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
-        let seq_scale = self.min_scale + (self.max_scale - self.min_scale) * e;
+        let seq_scale = 1.0;
 
         // Left panel: circle with angle indicator + stats
         let left_w = WIN_W / 2;

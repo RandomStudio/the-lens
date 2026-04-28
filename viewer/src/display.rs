@@ -314,10 +314,11 @@ impl Display {
         let bg_frame = self.bg_seq.frame_at_angle(angle).to_vec();
 
         let frame_count = self.fg_seq.frame_count();
-        let e = (eased_proximity_scale(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
+        //let e = (eased_proximity_scale(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
         let light_e = (eased_proximity_light(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
         let light_brightness = self.brightest_brightness * (1.0 - light_e);
-        let seq_scale = self.min_scale + (self.max_scale - self.min_scale) * e;
+        // let seq_scale = self.min_scale + (self.max_scale - self.min_scale) * e;
+        let seq_scale = 1.0;
         let diamond_opacity = (eased_proximity_diamond(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
 
         let mut composed = scale_from_center(&bg_frame, w1, h1, seq_scale);

@@ -67,6 +67,8 @@ fn build_surface(
         })
         .build()
         .expect("failed to create Pixels");
+    let info = pixels.adapter().get_info();
+    println!("[Surface] Adapter: {} ({:?}, backend: {:?})", info.name, info.device_type, info.backend);
     let _ = (width, height);
     WindowedSurface { window, pixels, width: w, height: h }
 }

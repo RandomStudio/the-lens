@@ -1,17 +1,16 @@
-use minifb::{Key, Window, WindowOptions};
-use crate::easing::{eased_proximity_scale, eased_proximity_light, eased_proximity_diamond};
+use winit::event_loop::ActiveEventLoop;
+use winit::window::WindowId;
+use crate::easing::{eased_proximity_light, eased_proximity_diamond};
 use crate::image_sequence::ImageSequence;
 use crate::light::Light;
+use crate::surface::{WindowedSurface, create_fullscreen_surface, sorted_monitors};
 
 const SEQUENCE_DISPLAY: usize = 1;
 const DIAMOND_DISPLAY: usize = 0;
 
 pub struct Display {
-    win1: Window,
-    win1_size: (usize, usize),
-    win1_buffer: Vec<u32>,
-    win2: Option<(Window, usize, usize)>,
-    win2_buffer: Vec<u32>,
+    seq_win: WindowedSurface,
+    diamond_win: Option<WindowedSurface>,
     diamond: Vec<u32>,
     diamond_w: usize,
     diamond_h: usize,
@@ -22,79 +21,6 @@ pub struct Display {
     max_scale: f64,
     brightest_brightness: f64,
     easing_multiplier: f64,
-}
-
-fn display_bounds(index: usize) -> Option<(isize, isize, usize, usize)> {
-    #[cfg(target_os = "macos")]
-    {
-        use core_graphics::display::CGDisplay;
-        let ids = CGDisplay::active_displays().ok()?;
-        let mut displays: Vec<(isize, isize, usize, usize)> = ids
-            .iter()
-            .map(|&id| {
-                let b = CGDisplay::new(id).bounds();
-                (b.origin.x as isize, b.origin.y as isize,
-                 b.size.width as usize, b.size.height as usize)
-            })
-            .collect();
-        displays.sort_by_key(|&(x, y, _, _)| (x, y));
-        return displays.get(index).copied();
-    }
-    #[cfg(target_os = "linux")]
-    {
-        return linux_display_bounds(index);
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        let _ = index;
-        Some((0, 0, 1920, 1080))
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn linux_display_bounds(index: usize) -> Option<(isize, isize, usize, usize)> {
-    use std::process::Command;
-    if let Ok(output) = Command::new("xrandr").arg("--current").output() {
-        let text = String::from_utf8_lossy(&output.stdout);
-        let mut displays: Vec<(isize, isize, usize, usize)> = text.lines()
-            .filter_map(parse_xrandr_line)
-            .collect();
-        if !displays.is_empty() {
-            displays.sort_by_key(|&(x, y, _, _)| (x, y));
-            return displays.get(index).copied();
-        }
-    }
-    // Fallback for Wayland or if xrandr unavailable
-    if index == 0 { Some((0, 0, 1920, 1080)) } else { None }
-}
-
-#[cfg(target_os = "linux")]
-fn parse_xrandr_line(line: &str) -> Option<(isize, isize, usize, usize)> {
-    if !line.contains(" connected") {
-        return None;
-    }
-    line.split_whitespace().find_map(try_parse_geometry)
-}
-
-#[cfg(target_os = "linux")]
-fn try_parse_geometry(token: &str) -> Option<(isize, isize, usize, usize)> {
-    if !token.contains('x') || !token.contains('+') {
-        return None;
-    }
-    let x_idx = token.find('x')?;
-    let w: usize = token[..x_idx].parse().ok()?;
-    let after_w = &token[x_idx + 1..];
-    let plus_idx = after_w.find('+')?;
-    let h: usize = after_w[..plus_idx].parse().ok()?;
-    let offsets = &after_w[plus_idx..];
-    let parts: Vec<&str> = offsets.split('+').filter(|s| !s.is_empty()).collect();
-    if parts.len() == 2 {
-        let x: isize = parts[0].parse().ok()?;
-        let y: isize = parts[1].parse().ok()?;
-        Some((x, y, w, h))
-    } else {
-        None
-    }
 }
 
 fn composite_over(fg: &[u32], bg: &mut [u32]) {
@@ -224,6 +150,7 @@ fn load_diamond(path: &str) -> (Vec<u32>, usize, usize) {
 
 impl Display {
     pub fn new(
+        event_loop: &ActiveEventLoop,
         sequence_path: &str,
         diamond_path: &str,
         index_transform: fn(isize, isize) -> isize,
@@ -232,50 +159,33 @@ impl Display {
         brightest_brightness: f64,
         easing_multiplier: f64,
     ) -> Self {
-        let (x1, y1, w1, h1) = display_bounds(SEQUENCE_DISPLAY)
-            .unwrap_or_else(|| {
-                eprintln!("[Display] Display {} not available, using fallback size", SEQUENCE_DISPLAY);
-                (0, 0, 1280, 720)
-            });
+        let monitors = sorted_monitors(event_loop);
+        let seq_monitor = monitors.get(SEQUENCE_DISPLAY).cloned()
+            .or_else(|| monitors.first().cloned())
+            .expect("no monitors available");
+        let diamond_monitor = monitors.get(DIAMOND_DISPLAY).cloned();
+
+        let seq_win = create_fullscreen_surface(event_loop, "Lens — Sequence", seq_monitor);
 
         let fg_path = format!("{}/1", sequence_path.trim_end_matches('/'));
         let bg_path = format!("{}/2", sequence_path.trim_end_matches('/'));
         let mut fg_seq = ImageSequence::load(&fg_path, index_transform);
         let mut bg_seq = ImageSequence::load(&bg_path, index_transform);
-        fg_seq.set_dimensions(w1, h1);
-        bg_seq.set_dimensions(w1, h1);
+        fg_seq.set_dimensions(seq_win.width as usize, seq_win.height as usize);
+        bg_seq.set_dimensions(seq_win.width as usize, seq_win.height as usize);
 
-        let mut win1 = Window::new(
-            "Lens — Sequence",
-            w1, h1,
-            WindowOptions { resize: true, borderless: true, ..Default::default() },
-        ).expect("Failed to create sequence window");
-        win1.set_position(x1, y1);
-        win1.set_target_fps(60);
-
-        let win2 = display_bounds(DIAMOND_DISPLAY).and_then(|(x2, y2, w2, h2)| {
-            let mut win = Window::new(
-                "Lens — Diamond",
-                w2, h2,
-                WindowOptions { resize: true, borderless: true, ..Default::default() },
-            ).ok()?;
-            win.set_position(x2, y2);
-            win.set_target_fps(60);
-            Some((win, w2, h2))
-        });
-
-        if win2.is_none() {
+        let diamond_win = diamond_monitor.map(|m|
+            create_fullscreen_surface(event_loop, "Lens — Diamond", m)
+        );
+        if diamond_win.is_none() {
             eprintln!("[Display] Display {} not available — diamond window skipped", DIAMOND_DISPLAY);
         }
 
         let (diamond, diamond_w, diamond_h) = load_diamond(diamond_path);
 
         Self {
-            win1_size: (w1, h1),
-            win1,
-            win1_buffer: vec![0u32; w1 * h1],
-            win2,
-            win2_buffer: vec![],
+            seq_win,
+            diamond_win,
             diamond,
             diamond_w,
             diamond_h,
@@ -289,69 +199,76 @@ impl Display {
         }
     }
 
-    pub fn is_open(&self) -> bool {
-        let w1 = self.win1.is_open()
-            && !self.win1.is_key_down(Key::Escape)
-            && !self.win1.is_key_down(Key::Q);
-        let w2 = self.win2.as_ref()
-            .map_or(true, |(w, _, _)| w.is_open()
-                && !w.is_key_down(Key::Escape)
-                && !w.is_key_down(Key::Q));
-        w1 && w2
+    pub fn request_redraws(&self) {
+        self.seq_win.window.request_redraw();
+        if let Some(ref dw) = self.diamond_win {
+            dw.window.request_redraw();
+        }
     }
 
-    pub fn render(&mut self, angle: f64) {
-        let new_size = self.win1.get_size();
-        if new_size != self.win1_size {
-            self.win1_size = new_size;
-            self.fg_seq.set_dimensions(new_size.0, new_size.1);
-            self.bg_seq.set_dimensions(new_size.0, new_size.1);
-        }
+    pub fn handles_window(&self, id: WindowId) -> bool {
+        self.seq_win.window.id() == id
+            || self.diamond_win.as_ref().map_or(false, |w| w.window.id() == id)
+    }
 
-        let (w1, h1) = self.win1_size;
+    pub fn resize_window(&mut self, id: WindowId, width: u32, height: u32) {
+        if self.seq_win.window.id() == id {
+            self.seq_win.resize(width, height);
+            self.fg_seq.set_dimensions(width as usize, height as usize);
+            self.bg_seq.set_dimensions(width as usize, height as usize);
+        } else if let Some(ref mut dw) = self.diamond_win {
+            if dw.window.id() == id {
+                dw.resize(width, height);
+            }
+        }
+    }
+
+    pub fn render_window(&mut self, id: WindowId, angle: f64) {
+        if self.seq_win.window.id() == id {
+            self.render_sequence(angle);
+        } else if let Some(ref mut dw) = self.diamond_win {
+            if dw.window.id() == id {
+                let frame_idx = self.fg_seq.frame_index_at_angle(angle);
+                let frame_count = self.fg_seq.frame_count();
+                let diamond_opacity = (eased_proximity_diamond(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
+                let mut buf = vec![0u32; (dw.width as usize) * (dw.height as usize)];
+                if self.diamond_w > 0 {
+                    rotate_diamond(
+                        &self.diamond, self.diamond_w, self.diamond_h,
+                        &mut buf, dw.width as usize, dw.height as usize,
+                        angle, diamond_opacity,
+                    );
+                }
+                dw.write_rgb(&buf);
+                dw.present();
+            }
+        }
+    }
+
+    fn render_sequence(&mut self, angle: f64) {
+        let (w, h) = (self.seq_win.width as usize, self.seq_win.height as usize);
         let frame_idx = self.fg_seq.frame_index_at_angle(angle);
         let fg_frame = self.fg_seq.frame_at_angle(angle).to_vec();
         let bg_frame = self.bg_seq.frame_at_angle(angle).to_vec();
 
         let frame_count = self.fg_seq.frame_count();
-        //let e = (eased_proximity_scale(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
         let light_e = (eased_proximity_light(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
         let light_brightness = self.brightest_brightness * (1.0 - light_e);
-        // let seq_scale = self.min_scale + (self.max_scale - self.min_scale) * e;
         let seq_scale: f64 = 1.0;
-        let diamond_opacity = (eased_proximity_diamond(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
+        let _ = (self.min_scale, self.max_scale);
 
         let identity_scale = (seq_scale - 1.0).abs() < f64::EPSILON;
-        let mut composed = if identity_scale { bg_frame } else { scale_from_center(&bg_frame, w1, h1, seq_scale) };
-        let fg_to_composite = if identity_scale { fg_frame } else { scale_from_center(&fg_frame, w1, h1, seq_scale) };
+        let mut composed = if identity_scale { bg_frame } else { scale_from_center(&bg_frame, w, h, seq_scale) };
+        let fg_to_composite = if identity_scale { fg_frame } else { scale_from_center(&fg_frame, w, h, seq_scale) };
         composite_over(&fg_to_composite, &mut composed);
-        self.win1_buffer = composed;
-        self.win1.update_with_buffer(&self.win1_buffer, w1, h1)
-            .unwrap_or_else(|e| eprintln!("[Display] win1 update failed: {}", e));
+
+        self.seq_win.write_rgb(&composed);
+        self.seq_win.present();
 
         self.light.update(light_brightness);
 
-        if let Some((ref mut win2, ref mut stored_w, ref mut stored_h)) = self.win2 {
-            let (w2, h2) = win2.get_size();
-            if (w2, h2) != (*stored_w, *stored_h) {
-                *stored_w = w2;
-                *stored_h = h2;
-            }
-            if self.diamond_w > 0 {
-                rotate_diamond(
-                    &self.diamond, self.diamond_w, self.diamond_h,
-                    &mut self.win2_buffer, w2, h2,
-                    angle, diamond_opacity,
-                );
-            } else {
-                self.win2_buffer.resize(w2 * h2, 0);
-            }
-            win2.update_with_buffer(&self.win2_buffer, w2, h2)
-                .unwrap_or_else(|e| eprintln!("[Display] win2 update failed: {}", e));
-        }
-
-        print!("\rAngle: {:6.2}°  idx: {:4}  brightness: {:.3}  scale: {:.3}  diamond: {:.3}  ",
-               angle, frame_idx, light_brightness, seq_scale, diamond_opacity);
+        print!("\rAngle: {:6.2}°  idx: {:4}  brightness: {:.3}  scale: {:.3}  ",
+               angle, frame_idx, light_brightness, seq_scale);
     }
 
     pub fn turn_off_light(&self) {

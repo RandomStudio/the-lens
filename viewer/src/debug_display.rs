@@ -1,6 +1,8 @@
-use minifb::{Key, Window, WindowOptions};
-use crate::easing::{eased_proximity_scale, eased_proximity_light, eased_proximity_diamond};
+use winit::event_loop::ActiveEventLoop;
+use winit::window::WindowId;
+use crate::easing::{eased_proximity_light, eased_proximity_diamond};
 use crate::image_sequence::{ImageSequence, scale_frame_to};
+use crate::surface::{WindowedSurface, create_windowed_surface};
 
 const WIN_W: usize = 1400;
 const WIN_H: usize = 700;
@@ -13,7 +15,7 @@ const TEXT_COLOR: u32 = 0xE8E8F0;
 const DIM_TEXT_COLOR: u32 = 0x666680;
 
 pub struct DebugDisplay {
-    window: Window,
+    surface: WindowedSurface,
     fg_seq: ImageSequence,
     bg_seq: ImageSequence,
     font: Option<fontdue::Font>,
@@ -26,20 +28,22 @@ pub struct DebugDisplay {
 }
 
 impl DebugDisplay {
-    pub fn new(sequence_path: &str, index_transform: fn(isize, isize) -> isize, min_scale: f64, max_scale: f64, brightest_brightness: f64, easing_multiplier: f64) -> Self {
-        let mut window = Window::new(
-            "Lens — Debug",
-            WIN_W, WIN_H,
-            WindowOptions { resize: true, ..Default::default() },
-        ).expect("Failed to create debug window");
-        window.set_target_fps(30);
+    pub fn new(
+        event_loop: &ActiveEventLoop,
+        sequence_path: &str,
+        index_transform: fn(isize, isize) -> isize,
+        min_scale: f64,
+        max_scale: f64,
+        brightest_brightness: f64,
+        easing_multiplier: f64,
+    ) -> Self {
+        let surface = create_windowed_surface(event_loop, "Lens — Debug", WIN_W as u32, WIN_H as u32);
 
         let fg_path = format!("{}/1", sequence_path.trim_end_matches('/'));
         let bg_path = format!("{}/2", sequence_path.trim_end_matches('/'));
         let mut fg_seq = ImageSequence::load(&fg_path, index_transform);
         let mut bg_seq = ImageSequence::load(&bg_path, index_transform);
 
-        // Size preview panel to maintain native aspect ratio (use whichever sequence has dimensions)
         let right_panel_w = WIN_W / 2;
         let right_panel_h = WIN_H;
         let native = fg_seq.peek_dimensions().or_else(|| bg_seq.peek_dimensions());
@@ -59,16 +63,28 @@ impl DebugDisplay {
             eprintln!("[DebugDisplay] No system font found; text will not render.");
         }
 
-        Self { window, fg_seq, bg_seq, font, preview_w, preview_h, min_scale, max_scale, brightest_brightness, easing_multiplier }
+        Self { surface, fg_seq, bg_seq, font, preview_w, preview_h, min_scale, max_scale, brightest_brightness, easing_multiplier }
     }
 
-    pub fn is_open(&self) -> bool {
-        self.window.is_open()
-            && !self.window.is_key_down(Key::Escape)
-            && !self.window.is_key_down(Key::Q)
+    pub fn request_redraws(&self) {
+        self.surface.window.request_redraw();
     }
 
-    pub fn render(&mut self, angle: f64) {
+    pub fn handles_window(&self, id: WindowId) -> bool {
+        self.surface.window.id() == id
+    }
+
+    pub fn resize_window(&mut self, id: WindowId, width: u32, height: u32) {
+        if self.surface.window.id() == id {
+            self.surface.resize(width, height);
+        }
+    }
+
+    pub fn render_window(&mut self, id: WindowId, angle: f64) {
+        if self.surface.window.id() != id { return; }
+
+        let win_w = self.surface.width as usize;
+        let win_h = self.surface.height as usize;
         let mut buf = vec![BG_COLOR; WIN_W * WIN_H];
 
         let frame_count = self.fg_seq.frame_count();
@@ -77,8 +93,8 @@ impl DebugDisplay {
         let light_brightness = self.brightest_brightness * (1.0 - light_e);
         let diamond_opacity = (eased_proximity_diamond(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
         let seq_scale = 1.0;
+        let _ = (self.min_scale, self.max_scale);
 
-        // Left panel: circle with angle indicator + stats
         let left_w = WIN_W / 2;
         let cx = left_w as f64 / 2.0;
         let cy = WIN_H as f64 / 2.0;
@@ -87,13 +103,11 @@ impl DebugDisplay {
         draw_circle_fill(&mut buf, WIN_W, WIN_H, cx, cy, circle_r, CIRCLE_FILL_COLOR, 0.35);
         draw_ring(&mut buf, WIN_W, WIN_H, cx, cy, circle_r, RING_COLOR, 0.6, 2.0);
 
-        // Angle dot at position on ring (0° = top, clockwise)
         let angle_rad = angle.to_radians();
         let dot_x = cx + circle_r * angle_rad.sin();
         let dot_y = cy - circle_r * angle_rad.cos();
         draw_glow_dot(&mut buf, WIN_W, WIN_H, dot_x, dot_y, 18.0, DOT_COLOR);
 
-        // Stats text inside circle
         if let Some(ref font) = self.font {
             let lines: &[(&str, String)] = &[
                 ("ANGLE", format!("{:.1}°", angle)),
@@ -121,8 +135,6 @@ impl DebugDisplay {
             }
         }
 
-        // Right panel: image sequence preview
-        let preview_x_offset = (WIN_W / 2 - self.preview_w) / 2;  // center in right half... wait, right panel starts at WIN_W/2
         let right_start = WIN_W / 2;
         let panel_w = WIN_W - right_start;
         let px_offset = right_start + (panel_w.saturating_sub(self.preview_w)) / 2;
@@ -138,7 +150,7 @@ impl DebugDisplay {
                 if frame.len() == pw * ph {
                     frame
                 } else {
-                    let seq_w = (frame.len() as f64).sqrt() as usize; // approximate, fallback
+                    let seq_w = (frame.len() as f64).sqrt() as usize;
                     scale_frame_to(&frame, seq_w, seq_w, pw, ph)
                 }
             };
@@ -158,19 +170,14 @@ impl DebugDisplay {
             }
         }
 
-        // Vertical divider
         for y in 0..WIN_H {
             let x = WIN_W / 2;
             blend_pixel(&mut buf, WIN_W, x, y, 0x333345, 0.8);
         }
 
-        let _ = preview_x_offset; // suppress unused warning
-
-        // Scale logical buffer to current window size, letterboxing to preserve aspect ratio
-        let (win_w, win_h) = self.window.get_size();
         let final_buf = fit_to_window(&buf, WIN_W, WIN_H, win_w, win_h);
-        self.window.update_with_buffer(&final_buf, win_w, win_h)
-            .unwrap_or_else(|e| eprintln!("[DebugDisplay] update failed: {}", e));
+        self.surface.write_rgb(&final_buf);
+        self.surface.present();
     }
 }
 
@@ -227,6 +234,9 @@ fn load_font() -> Option<fontdue::Font> {
         "/System/Library/Fonts/Menlo.ttc",
         "/System/Library/Fonts/Monaco.ttf",
         "/System/Library/Fonts/Helvetica.ttc",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/TTF/DejaVuSansMono.ttf",
     ];
     paths.iter().find_map(|p| {
         std::fs::read(p).ok().and_then(|data| {
@@ -266,7 +276,6 @@ fn draw_circle_fill(
             let dy = py as f64 - cy;
             let dist = (dx * dx + dy * dy).sqrt();
             if dist <= radius {
-                // Soft edge
                 let edge_alpha = if dist > radius - 1.5 {
                     (radius - dist) / 1.5
                 } else {
@@ -321,7 +330,6 @@ fn draw_glow_dot(
                 let alpha = if dist < radius {
                     1.0
                 } else {
-                    // Exponential glow falloff
                     let t = (dist - radius) / (glow_r - radius);
                     (1.0 - t).powf(2.5) * 0.6
                 };

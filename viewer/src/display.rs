@@ -1,3 +1,4 @@
+use std::time::Instant;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::WindowId;
 use crate::easing::{eased_proximity_light, eased_proximity_diamond};
@@ -21,6 +22,8 @@ pub struct Display {
     max_scale: f64,
     brightest_brightness: f64,
     easing_multiplier: f64,
+    last_frame: Option<Instant>,
+    fps_ema: f64,
 }
 
 fn composite_over(fg: &[u32], bg: &mut [u32]) {
@@ -196,6 +199,8 @@ impl Display {
             max_scale,
             brightest_brightness,
             easing_multiplier,
+            last_frame: None,
+            fps_ema: 0.0,
         }
     }
 
@@ -267,8 +272,20 @@ impl Display {
 
         self.light.update(light_brightness);
 
-        print!("\rAngle: {:6.2}°  idx: {:4}  brightness: {:.3}  scale: {:.3}  ",
-               angle, frame_idx, light_brightness, seq_scale);
+        let now = Instant::now();
+        if let Some(prev) = self.last_frame {
+            let dt = now.duration_since(prev).as_secs_f64();
+            if dt > 0.0 {
+                let inst_fps = 1.0 / dt;
+                self.fps_ema = if self.fps_ema == 0.0 { inst_fps } else { self.fps_ema * 0.9 + inst_fps * 0.1 };
+            }
+        }
+        self.last_frame = Some(now);
+
+        print!("\rAngle: {:6.2}°  idx: {:4}  brightness: {:.3}  scale: {:.3}  fps: {:5.1}  ",
+               angle, frame_idx, light_brightness, seq_scale, self.fps_ema);
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
     }
 
     pub fn turn_off_light(&self) {

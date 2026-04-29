@@ -60,6 +60,11 @@ fn build_surface(
     let surface_texture = SurfaceTexture::new(w, h, Arc::clone(&window));
     let pixels = PixelsBuilder::new(w, h, surface_texture)
         .texture_format(wgpu::TextureFormat::Rgba8Unorm)
+        .request_adapter_options(wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            force_fallback_adapter: false,
+            compatible_surface: None,
+        })
         .build()
         .expect("failed to create Pixels");
     let _ = (width, height);

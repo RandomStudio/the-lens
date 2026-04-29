@@ -1,6 +1,6 @@
 use std::sync::Arc;
 use pixels::wgpu;
-use pixels::{Pixels, PixelsBuilder, SurfaceTexture};
+use pixels::{Pixels, PixelsBuilder, ScalingMode, SurfaceTexture};
 use winit::dpi::PhysicalSize;
 use winit::event_loop::ActiveEventLoop;
 use winit::monitor::MonitorHandle;
@@ -63,7 +63,7 @@ fn build_surface(
         .map(|(w, h)| (w.max(1), h.max(1)))
         .unwrap_or((sw, sh));
     let surface_texture = SurfaceTexture::new(sw, sh, Arc::clone(&window));
-    let pixels = PixelsBuilder::new(bw, bh, surface_texture)
+    let mut pixels = PixelsBuilder::new(bw, bh, surface_texture)
         .texture_format(wgpu::TextureFormat::Rgba8Unorm)
         .request_adapter_options(wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -72,6 +72,10 @@ fn build_surface(
         })
         .build()
         .expect("failed to create Pixels");
+    // Default is `PixelPerfect` (integer-multiple scaling, letterboxes when surface
+    // size isn't an exact multiple of the buffer). Use `Fill` so the buffer scales
+    // smoothly to fill the surface while preserving aspect ratio.
+    pixels.set_scaling_mode(ScalingMode::Fill);
     let info = pixels.adapter().get_info();
     println!("[Surface] Adapter: {} ({:?}, backend: {:?}) — surface {}x{}, buffer {}x{}",
              info.name, info.device_type, info.backend, sw, sh, bw, bh);

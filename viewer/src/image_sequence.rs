@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{mpsc, Arc};
 
-const CACHE_RADIUS: usize = 250;
+const CACHE_RADIUS: usize = 500;
 
 pub struct ImageSequence {
     paths: Arc<Vec<PathBuf>>,
@@ -117,12 +117,21 @@ impl ImageSequence {
             });
         }
 
-        if !self.cache.contains_key(&idx) {
-            let frame = decode_frame(&self.paths[idx], self.width, self.height);
-            self.in_flight.remove(&idx);
-            self.cache.insert(idx, frame);
+        if self.cache.contains_key(&idx) {
+            return &self.cache[&idx];
         }
 
+        // Cache miss: prefer the nearest cached frame (circular distance) instead of
+        // blocking the render thread on a synchronous decode. The background decoder
+        // will fill this index in shortly.
+        if let Some(nearest) = nearest_key(&self.cache, idx, n) {
+            return &self.cache[&nearest];
+        }
+
+        // No frames cached at all (first call) — must decode now.
+        let frame = decode_frame(&self.paths[idx], self.width, self.height);
+        self.in_flight.remove(&idx);
+        self.cache.insert(idx, frame);
         &self.cache[&idx]
     }
 
@@ -131,6 +140,16 @@ impl ImageSequence {
         let img = image::open(path).ok()?;
         Some((img.width() as usize, img.height() as usize))
     }
+}
+
+fn nearest_key(cache: &HashMap<usize, Vec<u32>>, idx: usize, n: usize) -> Option<usize> {
+    if cache.is_empty() { return None; }
+    let n_i = n as isize;
+    let target = idx as isize;
+    cache.keys().min_by_key(|&&k| {
+        let diff = (k as isize - target).abs();
+        diff.min(n_i - diff)
+    }).copied()
 }
 
 fn window_indices(center: usize, n: usize) -> impl Iterator<Item = usize> {

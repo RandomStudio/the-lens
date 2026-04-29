@@ -84,14 +84,45 @@ impl WindowedSurface {
 
     pub fn write_rgb(&mut self, src: &[u32]) {
         let frame = self.pixels.frame_mut();
-        let n = (self.width as usize * self.height as usize).min(src.len());
-        for i in 0..n {
-            let p = src[i];
-            let off = i * 4;
-            frame[off]     = ((p >> 16) & 0xff) as u8;
-            frame[off + 1] = ((p >> 8) & 0xff) as u8;
-            frame[off + 2] = (p & 0xff) as u8;
-            frame[off + 3] = 0xff;
+        for (dst, &p) in frame.chunks_exact_mut(4).zip(src.iter()) {
+            dst[0] = (p >> 16) as u8;
+            dst[1] = (p >> 8) as u8;
+            dst[2] = p as u8;
+            dst[3] = 0xff;
+        }
+    }
+
+    /// Composite `fg` (RGBA in 0xAARRGGBB) over `bg` (RGB) in a single pass,
+    /// writing the result directly into the GPU frame buffer as RGBA bytes.
+    pub fn write_composite_rgb(&mut self, bg: &[u32], fg: &[u32]) {
+        let frame = self.pixels.frame_mut();
+        let chunks = frame.chunks_exact_mut(4);
+        let pairs = bg.iter().zip(fg.iter());
+        for (dst, (&b, &f)) in chunks.zip(pairs) {
+            let a = (f >> 24) & 0xff;
+            let (r, g, bl) = if a == 0xff {
+                ((f >> 16) as u8, (f >> 8) as u8, f as u8)
+            } else if a == 0 {
+                ((b >> 16) as u8, (b >> 8) as u8, b as u8)
+            } else {
+                let af = a;
+                let inv = 255 - af;
+                let fr = (f >> 16) & 0xff;
+                let fg_g = (f >> 8) & 0xff;
+                let fb = f & 0xff;
+                let br = (b >> 16) & 0xff;
+                let bg_g = (b >> 8) & 0xff;
+                let bb = b & 0xff;
+                (
+                    ((fr * af + br * inv) / 255) as u8,
+                    ((fg_g * af + bg_g * inv) / 255) as u8,
+                    ((fb * af + bb * inv) / 255) as u8,
+                )
+            };
+            dst[0] = r;
+            dst[1] = g;
+            dst[2] = bl;
+            dst[3] = 0xff;
         }
     }
 

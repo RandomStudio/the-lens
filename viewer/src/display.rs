@@ -251,23 +251,16 @@ impl Display {
     }
 
     fn render_sequence(&mut self, angle: f64) {
-        let (w, h) = (self.seq_win.width as usize, self.seq_win.height as usize);
         let frame_idx = self.fg_seq.frame_index_at_angle(angle);
-        let fg_frame = self.fg_seq.frame_at_angle(angle).to_vec();
-        let bg_frame = self.bg_seq.frame_at_angle(angle).to_vec();
-
         let frame_count = self.fg_seq.frame_count();
         let light_e = (eased_proximity_light(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
         let light_brightness = self.brightest_brightness * (1.0 - light_e);
         let seq_scale: f64 = 1.0;
         let _ = (self.min_scale, self.max_scale);
 
-        let identity_scale = (seq_scale - 1.0).abs() < f64::EPSILON;
-        let mut composed = if identity_scale { bg_frame } else { scale_from_center(&bg_frame, w, h, seq_scale) };
-        let fg_to_composite = if identity_scale { fg_frame } else { scale_from_center(&fg_frame, w, h, seq_scale) };
-        composite_over(&fg_to_composite, &mut composed);
-
-        self.seq_win.write_rgb(&composed);
+        let bg = self.bg_seq.frame_at_angle(angle);
+        let fg = self.fg_seq.frame_at_angle(angle);
+        self.seq_win.write_composite_rgb(bg, fg);
         self.seq_win.present();
 
         self.light.update(light_brightness);

@@ -121,14 +121,20 @@ impl ImageSequence {
             return &self.cache[&idx];
         }
 
-        // Cache miss: prefer the nearest cached frame (circular distance) instead of
-        // blocking the render thread on a synchronous decode. The background decoder
-        // will fill this index in shortly.
+        // Cache miss: if a cached frame is within NEAR_TOLERANCE indices of the requested
+        // idx, show that one (avoids a sync-decode hit during small lag). Otherwise the
+        // gap is large enough that showing it would freeze the display, so sync-decode
+        // the requested frame now.
+        const NEAR_TOLERANCE: usize = 10;
         if let Some(nearest) = nearest_key(&self.cache, idx, n) {
-            return &self.cache[&nearest];
+            let n_i = n as isize;
+            let raw_diff = (nearest as isize - idx as isize).abs();
+            let dist = raw_diff.min(n_i - raw_diff) as usize;
+            if dist <= NEAR_TOLERANCE {
+                return &self.cache[&nearest];
+            }
         }
 
-        // No frames cached at all (first call) — must decode now.
         let frame = decode_frame(&self.paths[idx], self.width, self.height);
         self.in_flight.remove(&idx);
         self.cache.insert(idx, frame);

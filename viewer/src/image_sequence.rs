@@ -170,43 +170,50 @@ fn window_indices(center: usize, n: usize) -> impl Iterator<Item = usize> {
     })
 }
 
+/// Decode an image and rescale (cover) into a `width × height` canvas.
+///
+/// Pixels are packed `0xff_BB_GG_RR` so that on little-endian targets the
+/// in-memory byte order is `[R, G, B, A]` — matching `Rgba8Unorm` exactly,
+/// which lets the surface blit be a single `copy_from_slice`.
 pub fn decode_frame(path: &Path, width: usize, height: usize) -> Vec<u32> {
+    let opaque = vec![0xff00_0000u32; width * height];
     let img = match image::ImageReader::open(path)
         .and_then(|r| r.with_guessed_format())
         .and_then(|r| r.decode().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)))
     {
-        Ok(img) => img.to_rgba8(),
+        Ok(img) => img.to_rgb8(),
         Err(e) => {
             eprintln!("[decode_frame] failed to decode {:?}: {}", path, e);
-            return vec![0u32; width * height];
+            return opaque;
         }
     };
 
     let img_w = img.width() as usize;
     let img_h = img.height() as usize;
 
-    // Cover: scale so width fills exactly, height overflows/underflows centered
     let scale = width as f64 / img_w as f64;
     let scaled_h = (img_h as f64 * scale).round() as usize;
     let y_src_offset = if scaled_h > height { (scaled_h - height) / 2 } else { 0 };
     let y_dst_offset = if scaled_h < height { (height - scaled_h) / 2 } else { 0 };
     let visible_rows = scaled_h.min(height);
 
-    let mut canvas = vec![0u32; width * height];
+    let inv_scale = 1.0 / scale;
+    let mut canvas = opaque;
     let raw = img.as_raw();
 
     for oy in 0..visible_rows {
         let scaled_y = oy + y_src_offset;
-        let sy = ((scaled_y as f64 / scale) as usize).min(img_h - 1);
+        let sy = ((scaled_y as f64 * inv_scale) as usize).min(img_h - 1);
         let dst_row = oy + y_dst_offset;
+        let row_base = sy * img_w * 3;
+        let dst_base = dst_row * width;
         for ox in 0..width {
-            let sx = ((ox as f64 / scale) as usize).min(img_w - 1);
-            let p = (sy * img_w + sx) * 4;
-            canvas[dst_row * width + ox] =
-                ((raw[p + 3] as u32) << 24)
-                | ((raw[p] as u32) << 16)
+            let sx = ((ox as f64 * inv_scale) as usize).min(img_w - 1);
+            let p = row_base + sx * 3;
+            canvas[dst_base + ox] = 0xff00_0000
+                | ((raw[p + 2] as u32) << 16)
                 | ((raw[p + 1] as u32) << 8)
-                | (raw[p + 2] as u32);
+                | (raw[p] as u32);
         }
     }
 

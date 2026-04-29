@@ -24,8 +24,8 @@ pub struct Display {
     diamond: Vec<u32>,
     diamond_w: usize,
     diamond_h: usize,
-    fg_seq: ImageSequence,
-    bg_seq: ImageSequence,
+    diamond_buf: Vec<u32>,
+    seq: ImageSequence,
     light: Light,
     min_scale: f64,
     max_scale: f64,
@@ -35,50 +35,9 @@ pub struct Display {
     fps_ema: f64,
 }
 
-fn composite_over(fg: &[u32], bg: &mut [u32]) {
-    let n = fg.len().min(bg.len());
-    for i in 0..n {
-        let f = fg[i];
-        let a = (f >> 24) & 0xff;
-        if a == 0 { continue; }
-        if a == 0xff {
-            bg[i] = f & 0x00ff_ffff;
-            continue;
-        }
-        let af = a as u32;
-        let inv = 255 - af;
-        let fr = (f >> 16) & 0xff;
-        let fg_g = (f >> 8) & 0xff;
-        let fb = f & 0xff;
-        let br = (bg[i] >> 16) & 0xff;
-        let bg_g = (bg[i] >> 8) & 0xff;
-        let bb = bg[i] & 0xff;
-        let r = (fr * af + br * inv) / 255;
-        let g = (fg_g * af + bg_g * inv) / 255;
-        let b = (fb * af + bb * inv) / 255;
-        bg[i] = (r << 16) | (g << 8) | b;
-    }
-}
-
-fn scale_from_center(src: &[u32], w: usize, h: usize, scale: f64) -> Vec<u32> {
-    let cx = w as f64 / 2.0;
-    let cy = h as f64 / 2.0;
-    let mut out = vec![0u32; w * h];
-    for oy in 0..h {
-        for ox in 0..w {
-            let sx = (cx + (ox as f64 - cx) / scale).round() as isize;
-            let sy = (cy + (oy as f64 - cy) / scale).round() as isize;
-            if sx >= 0 && sx < w as isize && sy >= 0 && sy < h as isize {
-                out[oy * w + ox] = src[sy as usize * w + sx as usize];
-            }
-        }
-    }
-    out
-}
-
 fn rotate_diamond(
     src: &[u32], src_w: usize, src_h: usize,
-    dst: &mut Vec<u32>, dst_w: usize, dst_h: usize,
+    dst: &mut [u32], dst_w: usize, dst_h: usize,
     angle_deg: f64, opacity: f64,
 ) {
     let angle_rad = angle_deg.to_radians();
@@ -91,19 +50,23 @@ fn rotate_diamond(
     let cy_dst = dst_h as f64 / 2.0;
 
     let scale = (dst_w as f64 / src_w as f64).min(dst_h as f64 / src_h as f64);
+    let inv_scale = 1.0 / scale;
 
-    dst.resize(dst_w * dst_h, 0);
-    for v in dst.iter_mut() { *v = 0; }
+    for v in dst.iter_mut() { *v = 0xff00_0000; }
+
+    let max_sx = (src_w - 1) as f64;
+    let max_sy = (src_h - 1) as f64;
 
     for py in 0..dst_h {
+        let dy = (py as f64 - cy_dst) * inv_scale;
+        let row_base = py * dst_w;
         for px in 0..dst_w {
-            let dx = (px as f64 - cx_dst) / scale;
-            let dy = (py as f64 - cy_dst) / scale;
+            let dx = (px as f64 - cx_dst) * inv_scale;
 
             let sx = cx_src + dx * cos_a + dy * sin_a;
             let sy = cy_src - dx * sin_a + dy * cos_a;
 
-            if sx >= 0.0 && sx < (src_w - 1) as f64 && sy >= 0.0 && sy < (src_h - 1) as f64 {
+            if sx >= 0.0 && sx < max_sx && sy >= 0.0 && sy < max_sy {
                 let x0 = sx as usize;
                 let y0 = sy as usize;
                 let xf = sx - x0 as f64;
@@ -114,11 +77,11 @@ fn rotate_diamond(
                 let p01 = src[(y0 + 1) * src_w + x0];
                 let p11 = src[(y0 + 1) * src_w + x0 + 1];
 
-                let r = bilerp(p00, p10, p01, p11, xf, yf, 16, opacity);
+                let r = bilerp(p00, p10, p01, p11, xf, yf, 0, opacity);
                 let g = bilerp(p00, p10, p01, p11, xf, yf, 8, opacity);
-                let b = bilerp(p00, p10, p01, p11, xf, yf, 0, opacity);
+                let b = bilerp(p00, p10, p01, p11, xf, yf, 16, opacity);
 
-                dst[py * dst_w + px] = (r << 16) | (g << 8) | b;
+                dst[row_base + px] = 0xff00_0000 | (b << 16) | (g << 8) | r;
             }
         }
     }
@@ -142,13 +105,16 @@ fn load_diamond(path: &str) -> (Vec<u32>, usize, usize) {
 
     match result {
         Ok(img) => {
-            let rgba = img.to_rgba8();
-            let w = rgba.width() as usize;
-            let h = rgba.height() as usize;
-            let raw = rgba.as_raw();
+            let rgb = img.to_rgb8();
+            let w = rgb.width() as usize;
+            let h = rgb.height() as usize;
+            let raw = rgb.as_raw();
             let pixels = (0..w * h).map(|i| {
-                let p = i * 4;
-                ((raw[p] as u32) << 16) | ((raw[p + 1] as u32) << 8) | (raw[p + 2] as u32)
+                let p = i * 3;
+                0xff00_0000
+                    | ((raw[p + 2] as u32) << 16)
+                    | ((raw[p + 1] as u32) << 8)
+                    | (raw[p] as u32)
             }).collect();
             println!("[Display] Loaded diamond image '{}' ({}x{})", path, w, h);
             (pixels, w, h)
@@ -184,12 +150,8 @@ impl Display {
             Some((SEQ_BUFFER_W, SEQ_BUFFER_H)),
         );
 
-        let fg_path = format!("{}/1", sequence_path.trim_end_matches('/'));
-        let bg_path = format!("{}/2", sequence_path.trim_end_matches('/'));
-        let mut fg_seq = ImageSequence::load(&fg_path, index_transform);
-        let mut bg_seq = ImageSequence::load(&bg_path, index_transform);
-        fg_seq.set_dimensions(seq_win.width as usize, seq_win.height as usize);
-        bg_seq.set_dimensions(seq_win.width as usize, seq_win.height as usize);
+        let mut seq = ImageSequence::load(sequence_path, index_transform);
+        seq.set_dimensions(seq_win.width as usize, seq_win.height as usize);
 
         let diamond_win = diamond_monitor.map(|m| {
             let s = m.size();
@@ -203,6 +165,11 @@ impl Display {
             eprintln!("[Display] Display {} not available — diamond window skipped", DIAMOND_DISPLAY);
         }
 
+        let diamond_buf = diamond_win
+            .as_ref()
+            .map(|w| vec![0xff00_0000u32; (w.width as usize) * (w.height as usize)])
+            .unwrap_or_default();
+
         let (diamond, diamond_w, diamond_h) = load_diamond(diamond_path);
 
         Self {
@@ -211,8 +178,8 @@ impl Display {
             diamond,
             diamond_w,
             diamond_h,
-            fg_seq,
-            bg_seq,
+            diamond_buf,
+            seq,
             light: Light::new(),
             min_scale,
             max_scale,
@@ -241,6 +208,7 @@ impl Display {
         } else if let Some(ref mut dw) = self.diamond_win {
             if dw.window.id() == id {
                 dw.resize(width, height);
+                self.diamond_buf.resize((dw.width as usize) * (dw.height as usize), 0xff00_0000);
             }
         }
     }
@@ -250,34 +218,32 @@ impl Display {
             self.render_sequence(angle);
         } else if let Some(ref mut dw) = self.diamond_win {
             if dw.window.id() == id {
-                let frame_idx = self.fg_seq.frame_index_at_angle(angle);
-                let frame_count = self.fg_seq.frame_count();
+                let frame_idx = self.seq.frame_index_at_angle(angle);
+                let frame_count = self.seq.frame_count();
                 let diamond_opacity = (eased_proximity_diamond(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
-                let mut buf = vec![0u32; (dw.width as usize) * (dw.height as usize)];
                 if self.diamond_w > 0 {
                     rotate_diamond(
                         &self.diamond, self.diamond_w, self.diamond_h,
-                        &mut buf, dw.width as usize, dw.height as usize,
+                        &mut self.diamond_buf, dw.width as usize, dw.height as usize,
                         angle, diamond_opacity,
                     );
                 }
-                dw.write_rgb(&buf);
+                dw.write_rgba(&self.diamond_buf);
                 dw.present();
             }
         }
     }
 
     fn render_sequence(&mut self, angle: f64) {
-        let frame_idx = self.fg_seq.frame_index_at_angle(angle);
-        let frame_count = self.fg_seq.frame_count();
+        let frame_idx = self.seq.frame_index_at_angle(angle);
+        let frame_count = self.seq.frame_count();
         let light_e = (eased_proximity_light(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
         let light_brightness = self.brightest_brightness * (1.0 - light_e);
         let seq_scale: f64 = 1.0;
         let _ = (self.min_scale, self.max_scale);
 
-        let bg = self.bg_seq.frame_at_angle(angle);
-        let fg = self.fg_seq.frame_at_angle(angle);
-        self.seq_win.write_composite_rgb(bg, fg);
+        let frame = self.seq.frame_at_angle(angle);
+        self.seq_win.write_rgba(frame);
         self.seq_win.present();
 
         self.light.update(light_brightness);

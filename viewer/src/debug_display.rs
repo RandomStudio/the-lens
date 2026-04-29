@@ -7,17 +7,23 @@ use crate::surface::{WindowedSurface, create_windowed_surface};
 const WIN_W: usize = 1400;
 const WIN_H: usize = 700;
 
-const BG_COLOR: u32 = 0x0D0D12;
-const CIRCLE_FILL_COLOR: u32 = 0x1A1A2E;
-const RING_COLOR: u32 = 0x4A4A6A;
-const DOT_COLOR: u32 = 0x00E5FF;
-const TEXT_COLOR: u32 = 0xE8E8F0;
-const DIM_TEXT_COLOR: u32 = 0x666680;
+/// Pack RGB into the LE-RGBA u32 layout used everywhere downstream
+/// (`0xff_BB_GG_RR` so in-memory bytes are `[R, G, B, A]`).
+const fn rgb(r: u8, g: u8, b: u8) -> u32 {
+    0xff00_0000 | ((b as u32) << 16) | ((g as u32) << 8) | (r as u32)
+}
+
+const BG_COLOR: u32 = rgb(0x0D, 0x0D, 0x12);
+const CIRCLE_FILL_COLOR: u32 = rgb(0x1A, 0x1A, 0x2E);
+const RING_COLOR: u32 = rgb(0x4A, 0x4A, 0x6A);
+const DOT_COLOR: u32 = rgb(0x00, 0xE5, 0xFF);
+const TEXT_COLOR: u32 = rgb(0xE8, 0xE8, 0xF0);
+const DIM_TEXT_COLOR: u32 = rgb(0x66, 0x66, 0x80);
+const DIVIDER_COLOR: u32 = rgb(0x33, 0x33, 0x45);
 
 pub struct DebugDisplay {
     surface: WindowedSurface,
-    fg_seq: ImageSequence,
-    bg_seq: ImageSequence,
+    seq: ImageSequence,
     font: Option<fontdue::Font>,
     preview_w: usize,
     preview_h: usize,
@@ -39,15 +45,11 @@ impl DebugDisplay {
     ) -> Self {
         let surface = create_windowed_surface(event_loop, "Lens — Debug", WIN_W as u32, WIN_H as u32, None);
 
-        let fg_path = format!("{}/1", sequence_path.trim_end_matches('/'));
-        let bg_path = format!("{}/2", sequence_path.trim_end_matches('/'));
-        let mut fg_seq = ImageSequence::load(&fg_path, index_transform);
-        let mut bg_seq = ImageSequence::load(&bg_path, index_transform);
+        let mut seq = ImageSequence::load(sequence_path, index_transform);
 
         let right_panel_w = WIN_W / 2;
         let right_panel_h = WIN_H;
-        let native = fg_seq.peek_dimensions().or_else(|| bg_seq.peek_dimensions());
-        let (preview_w, preview_h) = if let Some((nw, nh)) = native {
+        let (preview_w, preview_h) = if let Some((nw, nh)) = seq.peek_dimensions() {
             let aspect = nw as f64 / nh as f64;
             let h = right_panel_h;
             let w = (h as f64 * aspect) as usize;
@@ -55,15 +57,14 @@ impl DebugDisplay {
         } else {
             (right_panel_w, right_panel_h)
         };
-        fg_seq.set_dimensions(preview_w, preview_h);
-        bg_seq.set_dimensions(preview_w, preview_h);
+        seq.set_dimensions(preview_w, preview_h);
 
         let font = load_font();
         if font.is_none() {
             eprintln!("[DebugDisplay] No system font found; text will not render.");
         }
 
-        Self { surface, fg_seq, bg_seq, font, preview_w, preview_h, min_scale, max_scale, brightest_brightness, easing_multiplier }
+        Self { surface, seq, font, preview_w, preview_h, min_scale, max_scale, brightest_brightness, easing_multiplier }
     }
 
     pub fn request_redraws(&self) {
@@ -87,8 +88,8 @@ impl DebugDisplay {
         let win_h = self.surface.height as usize;
         let mut buf = vec![BG_COLOR; WIN_W * WIN_H];
 
-        let frame_count = self.fg_seq.frame_count();
-        let frame_idx = self.fg_seq.frame_index_at_angle(angle);
+        let frame_count = self.seq.frame_count();
+        let frame_idx = self.seq.frame_index_at_angle(angle);
         let light_e = (eased_proximity_light(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
         let light_brightness = self.brightest_brightness * (1.0 - light_e);
         let diamond_opacity = (eased_proximity_diamond(frame_idx, frame_count) * self.easing_multiplier).clamp(0.0, 1.0);
@@ -140,69 +141,38 @@ impl DebugDisplay {
         let px_offset = right_start + (panel_w.saturating_sub(self.preview_w)) / 2;
         let py_offset = (WIN_H.saturating_sub(self.preview_h)) / 2;
 
-        if frame_count > 0 || self.bg_seq.frame_count() > 0 {
+        if frame_count > 0 {
             let pw = self.preview_w;
             let ph = self.preview_h;
-            let fg_frame = self.fg_seq.frame_at_angle(angle).to_vec();
-            let bg_frame = self.bg_seq.frame_at_angle(angle).to_vec();
-
-            let normalize = |frame: Vec<u32>| -> Vec<u32> {
-                if frame.len() == pw * ph {
-                    frame
-                } else {
-                    let seq_w = (frame.len() as f64).sqrt() as usize;
-                    scale_frame_to(&frame, seq_w, seq_w, pw, ph)
-                }
+            let frame = self.seq.frame_at_angle(angle);
+            let preview_owned;
+            let preview: &[u32] = if frame.len() == pw * ph {
+                frame
+            } else {
+                let seq_w = (frame.len() as f64).sqrt() as usize;
+                preview_owned = scale_frame_to(frame, seq_w, seq_w, pw, ph);
+                &preview_owned
             };
-
-            let mut preview = normalize(bg_frame);
-            let fg_norm = normalize(fg_frame);
-            composite_over_dbg(&fg_norm, &mut preview);
 
             for py in 0..ph {
                 let dst_y = py_offset + py;
                 if dst_y >= WIN_H { break; }
-                for px in 0..pw {
-                    let dst_x = px_offset + px;
-                    if dst_x >= WIN_W { break; }
-                    buf[dst_y * WIN_W + dst_x] = preview[py * pw + px];
-                }
+                let src_row = py * pw;
+                let dst_row = dst_y * WIN_W;
+                let row_w = pw.min(WIN_W - px_offset);
+                buf[dst_row + px_offset..dst_row + px_offset + row_w]
+                    .copy_from_slice(&preview[src_row..src_row + row_w]);
             }
         }
 
         for y in 0..WIN_H {
             let x = WIN_W / 2;
-            blend_pixel(&mut buf, WIN_W, x, y, 0x333345, 0.8);
+            blend_pixel(&mut buf, WIN_W, x, y, DIVIDER_COLOR, 0.8);
         }
 
         let final_buf = fit_to_window(&buf, WIN_W, WIN_H, win_w, win_h);
-        self.surface.write_rgb(&final_buf);
+        self.surface.write_rgba(&final_buf);
         self.surface.present();
-    }
-}
-
-fn composite_over_dbg(fg: &[u32], bg: &mut [u32]) {
-    let n = fg.len().min(bg.len());
-    for i in 0..n {
-        let f = fg[i];
-        let a = (f >> 24) & 0xff;
-        if a == 0 { continue; }
-        if a == 0xff {
-            bg[i] = f & 0x00ff_ffff;
-            continue;
-        }
-        let af = a as u32;
-        let inv = 255 - af;
-        let fr = (f >> 16) & 0xff;
-        let fg_g = (f >> 8) & 0xff;
-        let fb = f & 0xff;
-        let br = (bg[i] >> 16) & 0xff;
-        let bg_g = (bg[i] >> 8) & 0xff;
-        let bb = bg[i] & 0xff;
-        let r = (fr * af + br * inv) / 255;
-        let g = (fg_g * af + bg_g * inv) / 255;
-        let b = (fb * af + bb * inv) / 255;
-        bg[i] = (r << 16) | (g << 8) | b;
     }
 }
 
@@ -216,7 +186,7 @@ fn fit_to_window(src: &[u32], src_w: usize, src_h: usize, dst_w: usize, dst_h: u
     let off_x = (dst_w - out_w) / 2;
     let off_y = (dst_h - out_h) / 2;
 
-    let mut dst = vec![0u32; dst_w * dst_h];
+    let mut dst = vec![0xff00_0000u32; dst_w * dst_h];
     for dy in 0..out_h {
         let sy = ((dy as f64 / scale) as usize).min(src_h - 1);
         for dx in 0..out_w {
@@ -249,16 +219,16 @@ fn blend_pixel(buf: &mut [u32], buf_w: usize, x: usize, y: usize, color: u32, al
     let idx = y * buf_w + x;
     if idx >= buf.len() { return; }
     let bg = buf[idx];
-    let cr = ((color >> 16) & 0xff) as f64;
+    let cr = ( color        & 0xff) as f64;
     let cg = ((color >>  8) & 0xff) as f64;
-    let cb = ( color        & 0xff) as f64;
-    let br = ((bg >> 16) & 0xff) as f64;
+    let cb = ((color >> 16) & 0xff) as f64;
+    let br = ( bg        & 0xff) as f64;
     let bg_g = ((bg >>  8) & 0xff) as f64;
-    let bb = ( bg        & 0xff) as f64;
+    let bb = ((bg >> 16) & 0xff) as f64;
     let r = (br + (cr - br) * alpha) as u32;
     let g = (bg_g + (cg - bg_g) * alpha) as u32;
     let b = (bb + (cb - bb) * alpha) as u32;
-    buf[idx] = (r << 16) | (g << 8) | b;
+    buf[idx] = 0xff00_0000 | (b << 16) | (g << 8) | r;
 }
 
 fn draw_circle_fill(
@@ -344,9 +314,9 @@ fn draw_text(
     font: &fontdue::Font, size: f32,
     x: i32, baseline_y: i32, text: &str, color: u32,
 ) {
-    let cr = ((color >> 16) & 0xff) as f32;
+    let cr = ( color        & 0xff) as f32;
     let cg = ((color >>  8) & 0xff) as f32;
-    let cb = ( color        & 0xff) as f32;
+    let cb = ((color >> 16) & 0xff) as f32;
     let mut cx = x;
     for ch in text.chars() {
         let (metrics, bitmap) = font.rasterize(ch, size);
@@ -362,12 +332,13 @@ fn draw_text(
                 let a = alpha as f32 / 255.0;
                 let idx = py as usize * buf_w + px as usize;
                 let bg = buf[idx];
-                let br = ((bg >> 16) & 0xff) as f32;
+                let br = ( bg         & 0xff) as f32;
                 let bg_g = ((bg >>  8) & 0xff) as f32;
-                let bb = ( bg         & 0xff) as f32;
-                buf[idx] = (((br + (cr - br) * a) as u32) << 16)
-                          | (((bg_g + (cg - bg_g) * a) as u32) << 8)
-                          |  ((bb + (cb - bb) * a) as u32);
+                let bb = ((bg >> 16) & 0xff) as f32;
+                let r = (br + (cr - br) * a) as u32;
+                let g = (bg_g + (cg - bg_g) * a) as u32;
+                let b = (bb + (cb - bb) * a) as u32;
+                buf[idx] = 0xff00_0000 | (b << 16) | (g << 8) | r;
             }
         }
         cx += metrics.advance_width as i32;

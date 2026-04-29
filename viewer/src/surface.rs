@@ -90,48 +90,18 @@ impl WindowedSurface {
         let _ = self.pixels.resize_surface(width, height);
     }
 
-    pub fn write_rgb(&mut self, src: &[u32]) {
+    /// Blit `src` into the GPU frame buffer.
+    ///
+    /// Pixels must be packed `0xAA_BB_GG_RR` so their little-endian byte order
+    /// (`[R, G, B, A]`) matches the surface's `Rgba8Unorm` format. That makes
+    /// the upload a straight `copy_from_slice` of the underlying bytes.
+    pub fn write_rgba(&mut self, src: &[u32]) {
         let frame = self.pixels.frame_mut();
-        for (dst, &p) in frame.chunks_exact_mut(4).zip(src.iter()) {
-            dst[0] = (p >> 16) as u8;
-            dst[1] = (p >> 8) as u8;
-            dst[2] = p as u8;
-            dst[3] = 0xff;
-        }
-    }
-
-    /// Composite `fg` (RGBA in 0xAARRGGBB) over `bg` (RGB) in a single pass,
-    /// writing the result directly into the GPU frame buffer as RGBA bytes.
-    pub fn write_composite_rgb(&mut self, bg: &[u32], fg: &[u32]) {
-        let frame = self.pixels.frame_mut();
-        let chunks = frame.chunks_exact_mut(4);
-        let pairs = bg.iter().zip(fg.iter());
-        for (dst, (&b, &f)) in chunks.zip(pairs) {
-            let a = (f >> 24) & 0xff;
-            let (r, g, bl) = if a == 0xff {
-                ((f >> 16) as u8, (f >> 8) as u8, f as u8)
-            } else if a == 0 {
-                ((b >> 16) as u8, (b >> 8) as u8, b as u8)
-            } else {
-                let af = a;
-                let inv = 255 - af;
-                let fr = (f >> 16) & 0xff;
-                let fg_g = (f >> 8) & 0xff;
-                let fb = f & 0xff;
-                let br = (b >> 16) & 0xff;
-                let bg_g = (b >> 8) & 0xff;
-                let bb = b & 0xff;
-                (
-                    ((fr * af + br * inv) / 255) as u8,
-                    ((fg_g * af + bg_g * inv) / 255) as u8,
-                    ((fb * af + bb * inv) / 255) as u8,
-                )
-            };
-            dst[0] = r;
-            dst[1] = g;
-            dst[2] = bl;
-            dst[3] = 0xff;
-        }
+        let n = src.len().min(frame.len() / 4);
+        let src_bytes = unsafe {
+            std::slice::from_raw_parts(src.as_ptr() as *const u8, n * 4)
+        };
+        frame[..n * 4].copy_from_slice(src_bytes);
     }
 
     pub fn present(&self) {

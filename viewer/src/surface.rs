@@ -9,6 +9,7 @@ use winit::window::{Fullscreen, Window};
 pub struct WindowedSurface {
     pub window: Arc<Window>,
     pub pixels: Pixels<'static>,
+    /// Pixel buffer dimensions — what `frame_mut()` exposes and what render code writes.
     pub width: u32,
     pub height: u32,
 }
@@ -26,6 +27,7 @@ pub fn create_fullscreen_surface(
     event_loop: &ActiveEventLoop,
     title: &str,
     monitor: MonitorHandle,
+    buffer: Option<(u32, u32)>,
 ) -> WindowedSurface {
     let size = monitor.size();
     let attrs = Window::default_attributes()
@@ -33,7 +35,7 @@ pub fn create_fullscreen_surface(
         .with_decorations(false)
         .with_inner_size(PhysicalSize::new(size.width, size.height))
         .with_fullscreen(Some(Fullscreen::Borderless(Some(monitor))));
-    build_surface(event_loop, attrs, size.width, size.height)
+    build_surface(event_loop, attrs, buffer)
 }
 
 pub fn create_windowed_surface(
@@ -41,24 +43,27 @@ pub fn create_windowed_surface(
     title: &str,
     width: u32,
     height: u32,
+    buffer: Option<(u32, u32)>,
 ) -> WindowedSurface {
     let attrs = Window::default_attributes()
         .with_title(title)
         .with_inner_size(PhysicalSize::new(width, height));
-    build_surface(event_loop, attrs, width, height)
+    build_surface(event_loop, attrs, buffer)
 }
 
 fn build_surface(
     event_loop: &ActiveEventLoop,
     attrs: winit::window::WindowAttributes,
-    width: u32,
-    height: u32,
+    buffer: Option<(u32, u32)>,
 ) -> WindowedSurface {
     let window = Arc::new(event_loop.create_window(attrs).expect("failed to create window"));
     let actual = window.inner_size();
-    let (w, h) = (actual.width.max(1), actual.height.max(1));
-    let surface_texture = SurfaceTexture::new(w, h, Arc::clone(&window));
-    let pixels = PixelsBuilder::new(w, h, surface_texture)
+    let (sw, sh) = (actual.width.max(1), actual.height.max(1));
+    let (bw, bh) = buffer
+        .map(|(w, h)| (w.max(1), h.max(1)))
+        .unwrap_or((sw, sh));
+    let surface_texture = SurfaceTexture::new(sw, sh, Arc::clone(&window));
+    let pixels = PixelsBuilder::new(bw, bh, surface_texture)
         .texture_format(wgpu::TextureFormat::Rgba8Unorm)
         .request_adapter_options(wgpu::RequestAdapterOptions {
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -68,18 +73,17 @@ fn build_surface(
         .build()
         .expect("failed to create Pixels");
     let info = pixels.adapter().get_info();
-    println!("[Surface] Adapter: {} ({:?}, backend: {:?})", info.name, info.device_type, info.backend);
-    let _ = (width, height);
-    WindowedSurface { window, pixels, width: w, height: h }
+    println!("[Surface] Adapter: {} ({:?}, backend: {:?}) — surface {}x{}, buffer {}x{}",
+             info.name, info.device_type, info.backend, sw, sh, bw, bh);
+    WindowedSurface { window, pixels, width: bw, height: bh }
 }
 
 impl WindowedSurface {
+    /// Resize the on-screen surface only — the pixel buffer dimensions stay fixed
+    /// (the GPU handles upscale/downscale to whatever surface size we present at).
     pub fn resize(&mut self, width: u32, height: u32) {
         if width == 0 || height == 0 { return; }
         let _ = self.pixels.resize_surface(width, height);
-        let _ = self.pixels.resize_buffer(width, height);
-        self.width = width;
-        self.height = height;
     }
 
     pub fn write_rgb(&mut self, src: &[u32]) {

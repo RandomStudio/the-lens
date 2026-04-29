@@ -9,6 +9,15 @@ use crate::surface::{WindowedSurface, create_fullscreen_surface, sorted_monitors
 const SEQUENCE_DISPLAY: usize = 1;
 const DIAMOND_DISPLAY: usize = 0;
 
+/// Sequence pixel buffer size — matches the source images. The GPU upscales to whatever
+/// the actual sequence-monitor resolution is at present time.
+const SEQ_BUFFER_W: u32 = 1024;
+const SEQ_BUFFER_H: u32 = 1024;
+
+/// Diamond pixel buffer renders at half the monitor's linear resolution
+/// (quarter the pixel count). GPU upscales 2× to the surface.
+const DIAMOND_BUFFER_DIVISOR: u32 = 2;
+
 pub struct Display {
     seq_win: WindowedSurface,
     diamond_win: Option<WindowedSurface>,
@@ -168,7 +177,12 @@ impl Display {
             .expect("no monitors available");
         let diamond_monitor = monitors.get(DIAMOND_DISPLAY).cloned();
 
-        let seq_win = create_fullscreen_surface(event_loop, "Lens — Sequence", seq_monitor);
+        let seq_win = create_fullscreen_surface(
+            event_loop,
+            "Lens — Sequence",
+            seq_monitor,
+            Some((SEQ_BUFFER_W, SEQ_BUFFER_H)),
+        );
 
         let fg_path = format!("{}/1", sequence_path.trim_end_matches('/'));
         let bg_path = format!("{}/2", sequence_path.trim_end_matches('/'));
@@ -177,9 +191,14 @@ impl Display {
         fg_seq.set_dimensions(seq_win.width as usize, seq_win.height as usize);
         bg_seq.set_dimensions(seq_win.width as usize, seq_win.height as usize);
 
-        let diamond_win = diamond_monitor.map(|m|
-            create_fullscreen_surface(event_loop, "Lens — Diamond", m)
-        );
+        let diamond_win = diamond_monitor.map(|m| {
+            let s = m.size();
+            let buf = (
+                (s.width / DIAMOND_BUFFER_DIVISOR).max(1),
+                (s.height / DIAMOND_BUFFER_DIVISOR).max(1),
+            );
+            create_fullscreen_surface(event_loop, "Lens — Diamond", m, Some(buf))
+        });
         if diamond_win.is_none() {
             eprintln!("[Display] Display {} not available — diamond window skipped", DIAMOND_DISPLAY);
         }
@@ -219,8 +238,6 @@ impl Display {
     pub fn resize_window(&mut self, id: WindowId, width: u32, height: u32) {
         if self.seq_win.window.id() == id {
             self.seq_win.resize(width, height);
-            self.fg_seq.set_dimensions(width as usize, height as usize);
-            self.bg_seq.set_dimensions(width as usize, height as usize);
         } else if let Some(ref mut dw) = self.diamond_win {
             if dw.window.id() == id {
                 dw.resize(width, height);

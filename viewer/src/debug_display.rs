@@ -37,7 +37,7 @@ impl DebugDisplay {
         brightest_brightness: f64,
         easing_multiplier: f64,
     ) -> Self {
-        let surface = create_windowed_surface(event_loop, "Lens — Debug", WIN_W as u32, WIN_H as u32);
+        let surface = create_windowed_surface(event_loop, "Lens — Debug", WIN_W as u32, WIN_H as u32, None);
 
         let fg_path = format!("{}/1", sequence_path.trim_end_matches('/'));
         let bg_path = format!("{}/2", sequence_path.trim_end_matches('/'));
